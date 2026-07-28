@@ -1,0 +1,22 @@
+# 密钥
+.env
+.env.local
+
+# 你自己的数据（仓库里带的是同名 .example.json，程序读不到会自动退回）
+dict.json
+config.json
+canon.json
+protect.json
+negatives.txt
+
+# 本机产物
+build/
+moss-ptt.app/
+signing/
+.last-designated
+.ax-regrant-needed
+.build.lock.d/
+__pycache__/
+*.pyc
+.DS_Store
+review.html

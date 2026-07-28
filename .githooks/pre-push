@@ -1,0 +1,8 @@
+#!/bin/bash
+# 判卷闸 L4 · 不全绿推不出去
+echo "[pre-push] 跑 check.sh…"
+if ! ./check.sh; then
+  echo
+  echo "⛔ check.sh 未全绿,push 已阻止。修完再推。"
+  exit 1
+fi
