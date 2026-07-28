@@ -110,21 +110,6 @@ def _break_long(seg: str) -> str:
     return "".join(out)
 
 
-def prosody(text: str) -> str:
-    """把一段话切成"能一口一口念"的形状,并把停顿写死。"""
-    text = MIX_A.sub(r"\1 \2", text)
-    text = MIX_B.sub(r"\1 \2", text)
-    paras = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
-    out_paras = []
-    for p in paras:
-        p = re.sub(r"\s*\n\s*", " ", p)
-        # 按句末标点切,标点留在前一句里
-        sents = re.findall(rf"[^{SENT_END}]*[{SENT_END}]|[^{SENT_END}]+$", p)
-        sents = [s.strip() for s in sents if s.strip()]
-        out_paras.append(f"[[slnc {PAUSE_SENT}]]".join(_break_long(s) for s in sents))
-    return f"[[slnc {PAUSE_PARA}]]".join(out_paras)
-
-
 def speakify(text: str) -> str:
     for pat, rep in DROP_BLOCKS:
         text = pat.sub(rep, text)
@@ -199,25 +184,11 @@ def selftest() -> int:
     o2 = speakify(nopunct)
     if "后面还有" in o2:
         print("  ✗ 没有标点可断时仍然硬切了（应当整段全念）"); bad += 1
-    # ── 断句层判据(作者 2026-07-28:「断句断的很扯淡」) ──────────────────
-    # ⛔ 每一条都对应一种**实际会念错**的情形,不是我想象的
-    p = prosody("第一句话。第二句话。")
-    if "[[slnc" not in p:
-        print("  ✗ 句子之间没有插停顿 —— 引擎会把两句连着念"); bad += 1
-    p2 = prosody("装了 pipefail 的 guard")
-    if "了pipefail" in p2 or "pipefail的" in p2:
-        print(f"  ✗ 中英粘连没拆开(引擎会把中英切成一坨) → {p2!r}"); bad += 1
-    # ⛔⛔ 最要紧的一条:断句层**绝不能把词劈开** —— 第一版就是这么把「苹果」念成「苹,果」的,
-    # 而当时的自检只查「有没有停顿」照样打绿。判据 = 剥掉停顿标记必须**逐字还原**原文。
-    for src in ["好的那两档 Enhanced 苹果有，只是没下载。",
-                "这是一句很长的话里面一个标点都没有所以引擎根本不知道该在哪里换气结果就会一路念到底",
-                "第一句。第二句，第三个分句。"]:
-        stripped = re.sub(r"\[\[slnc \d+\]\]", "", prosody(src))
-        if re.sub(r"\s+", "", stripped) != re.sub(r"\s+", "", MIX_A.sub(r"\1 \2", MIX_B.sub(r"\1 \2", src))):
-            print(f"  ✗ 断句层改动了正文(会把词劈开) ← {src!r}\n     → {stripped!r}"); bad += 1
-    p4 = prosody("第一段。\n\n第二段。")
-    if f"slnc {PAUSE_PARA}" not in p4:
-        print("  ✗ 段落之间没给更长的停顿"); bad += 1
+    # ⛔ 2026-07-28:原来这里有 5 条「断句层」断言(给 macOS `say` 插 [[slnc]] 停顿标记)。
+    # 播放挪进 Swift 流式引擎之后,`prosody()` / `--say` **没有任何调用方** ——
+    # 只剩这些自检在调它自己。⇒ 整套连同被测函数一起删。
+    # 作者:「为什么这么一个你自己都说已经没有存在价值的玩意儿，还会留在那里」。
+    # ⚠ 下面那条**留着**:它守的是"默认输出里不许有 [[slnc]]",而那正是删干净的证明。
     # ⛔ 反向,而且这条是 作者 亲耳听出来的:默认输出里**绝不许**有 [[slnc]] ——
     # 它只对 macOS say 有意义,发给别的引擎就会被逐字念出来。
     import subprocess as _sp
@@ -225,10 +196,6 @@ def selftest() -> int:
                           capture_output=True, text=True).stdout
     if "[[" in default_out:
         print(f"  ✗ 默认输出里有停顿指令(会被 MOSS 念出来): {default_out!r}"); bad += 1
-    say_out = _sp.run([sys.executable, __file__, "--say"], input="第一句。第二句。",
-                      capture_output=True, text=True).stdout
-    if "[[slnc" not in say_out:
-        print("  ✗ --say 版本反而没有停顿指令"); bad += 1
 
     if bad:
         print(f"✗ speakify: {bad} 项不过"); return 1
@@ -245,4 +212,4 @@ if __name__ == "__main__":
     # 病根:断句层当初是为了修本机拼接式引擎的烂断句;换成 MOSS 神经 TTS 之后
     # 它既不需要、又有害,而我忘了摘。
     # ⇒ **默认出干净文本**(神经引擎自己看标点断句);停顿指令只在 `--say` 时才加。
-    sys.stdout.write(prosody(out) if "--say" in sys.argv else out)
+    sys.stdout.write(out)

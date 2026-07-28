@@ -844,6 +844,21 @@ else
   pass "shell 变量没有紧跟中文的（那会被 bash 当成变量名的一部分）"
 fi
 
+# ⛔⛔ 2026-07-28 作者:「两套语音在同时播放…我到底在我的机器里运行了几套」。
+# 病:speak-hook.sh(整段念)与 speak-watch.py(边写边念)靠瞬时 pgrep 互斥,
+#   而 watcher 会在每次开关语音模式时退出、下次 UserPromptSubmit 才回来 ——
+#   那个窗口里两边的守卫**各自都通过**(它们看的是不同时刻)。
+# ⇒ 删掉第二条发声路径。这一条盯住它别长回来。
+if [ -f speak-hook.sh ]; then
+  SNDPATH=$(grep -cE "curl|afplay|/usr/bin/say|audio/speech" speak-hook.sh || true)
+  if [ "${SNDPATH}" = "0" ]; then
+    pass "只有一条发声路径（speak-hook 不再自己念，念由 speak-watch 一家负责）"
+  else
+    fail "speak-hook.sh 又能自己发声了 —— 两条路会在 watcher 重启的窗口里撞车"
+    grep -nE "curl|afplay|/usr/bin/say|audio/speech" speak-hook.sh | sed 's/^/     /'
+  fi
+fi
+
 # ⛔ 边写边念的两条性质,人耳要好几轮才反应过来,而那时候已经烦了:
 #   ① 段间不空等合成(不然一顿一顿的) ② 你一开口,本段剩下的全丢(不然打断了个寂寞)
 # 都是纯时序逻辑,自检拿假的 synth/play 验,不联网不出声。

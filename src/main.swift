@@ -1457,25 +1457,16 @@ final class StreamSpeaker: NSObject, URLSessionDataDelegate {
 /// 播放侧 —— 只为一件事存在:**让"打断"有东西可打断**。
 /// 钩子那边用 afplay 播放,这里负责知道它在不在播、以及一句话把它掐掉。
 enum Speaker {
-    static var isPlaying: Bool {
-        // ⛔ 流式朗读在 tingzhe --speak 里放,不是 afplay —— 只查 afplay 会让打断静默失效
-        if TTS.isSpeaking { return true }
-        let t = Process(); t.launchPath = "/usr/bin/pgrep"
-        t.arguments = ["-x", "afplay"]
-        let pipe = Pipe(); t.standardOutput = pipe; t.standardError = Pipe()
-        do { try t.run() } catch { return false }
-        t.waitUntilExit()
-        return t.terminationStatus == 0
-    }
+    /// ⛔ 2026-07-28:afplay 那一支**删了** —— 播放已经全部在进程内(AVAudioEngine),
+    /// 全仓没有任何活代码再启动 afplay(唯一的引用是自检的探针,而那条也一并改成走真机制)。
+    /// 作者:「为什么这么一个你自己都说已经没有存在价值的玩意儿，还会留在那里」。
+    static var isPlaying: Bool { TTS.isSpeaking }
     static func shutUp() {
         // ⛔ 流式朗读在**自己的进程**里放,不能 pkill —— 那个进程也叫 tingzhe,
         //   连常驻一起杀。改成碰一下标志文件,它自己看见就闭嘴(TTS.shutUpFlag)。
+        // ⛔ 那两句 `pkill afplay/say` 删了 —— 注释当时写着「兜底:非流式那条路仍走 afplay」,
+        //   而**那条路已经不存在了**。留着的唯一效果是让读代码的人以为有两条播放路径。
         TTS.signalShutUp()
-        for p in ["afplay", "say"] {          // 兜底:非流式那条路仍走 afplay
-            let t = Process(); t.launchPath = "/usr/bin/pkill"
-            t.arguments = ["-x", p]; t.standardError = Pipe()
-            try? t.run()
-        }
         log("你开口了 → 掐掉正在播的")
     }
 }
@@ -1589,6 +1580,11 @@ final class Controller {
                 // ⚠ 顺序在这之前已经排好,append 是按序进的,拼出来就是原话顺序。
                 // 一句一条模式走的就是这条老路,不经 Composer —— 作者 要的"两种并行"在这里分叉。
                 guard VoiceMode.isOn, !Composer.isInstant else {
+                    // ⛔ 这条日志不是装饰(2026-07-28 作者「一句一条又坏了」)。
+                    // 攒成一条那条路会打「攒够一条(N 段)→ 发出:…」,而这条路**一个字都不打** ——
+                    // 于是 作者 报"坏了"时,日志根本回答不了「到底发没发」,只能靠我推。
+                    // **两条并行的路,只有一条留脚印 = 另一条出事时你是瞎的。**
+                    log("一句一条 → 发出:\(fixed)")
                     deliver(fixed)
                     HUD.shared.show(raw: raw, fixed: fixed, fired: (dn + cn) > 0)
                     return
@@ -2158,7 +2154,13 @@ final class Picker {
     func toggle() {
         if panel?.isVisible == true { close() } else { open() }
     }
-    func close() { panel?.orderOut(nil); panel = nil }
+    /// ⛔⛔ 关面板必须**同时结束按键捕获**(2026-07-28)。
+    /// 捕获态下 `HotKey.capturing == true`,而三把开关键的监听器第一行就是
+    /// `guard !HotKey.capturing else { return }` —— 也就是说:
+    /// **点了「改这把键」的行、然后不按键直接关掉面板 ⇒ 语音开关/静音/切发送方式三把键全哑,
+    /// 而且没有任何提示**(那句橙色的「按下任意键…」跟着面板一起没了)。
+    /// 只有按 Esc 或真的按下一把新键才会解除 —— 这两条路都要求你还看得见面板。
+    func close() { endGrab(); panel?.orderOut(nil); panel = nil }
 
     func open() {
         let ss = StatusBar.sessions()
@@ -2347,10 +2349,11 @@ final class Picker {
 
     @objc private func grabKey(_ sender: NSButton) {
         guard let cfgKey = sender.identifier?.rawValue else { return }
-        endGrab()
+        // ⚠ 顺序不能反:`close()` 现在会 endGrab(见它的注释),所以进入捕获态必须在它之后。
+        close()
         Picker.capturingKey = cfgKey
         HotKey.capturing = true
-        close(); open()
+        open()
         // ⛔ 修饰键不产生 keyDown —— 不加这个监听器,你按 ⌘/⌃/⌥ 时捕获器什么都收不到,
         //   表现就是"这几个键不让选"(作者 2026-07-28 原话)。
         var tapDown: UInt16?
@@ -2676,6 +2679,45 @@ enum HotKey {
 
 var hotKeyMonitors: [Any] = []
 
+/// 「轻点一下修饰键」的判据。⛔ 抠成纯结构体是为了**让闸能喂事件序列进来** ——
+/// 它原来整个住在闭包里,于是**一条断言都没有**,而 作者 的切发送方式键就是在这儿哑掉的
+/// (2026-07-28:10:46 重启后他按了一下午,日志里「发送方式 →」只出现过一次)。
+///
+/// ⛔ 两条真 bug,都是"松开"那一侧的:
+///  ① **松开不认键码**。原来只判「这个修饰位没了」,于是**别的键**的 flagsChanged
+///     也会走进松开分支 —— 按住 ⌃ 再按 ⌘、先松 ⌃,状态就乱。
+///  ② **按下事件被吞掉一次,`down` 就永远卡在 true**:此后每次按下都进不了
+///     `!down` 分支 ⇒ `downAt` 停在很久以前 ⇒ 松开时 `< 0.4s` 恒假 ⇒ **这把键从此不响**。
+///     全局监听器漏事件是常态(切 Space、别的 app 抢焦点),所以这不是理论。
+///     ⇒ 按下时若离上次按下已超过判定窗,一律当**新的一次按下**重新起算。
+struct TapDetector {
+    let code: UInt16
+    /// 轻点上限:按下到松开超过它就算"按住",不是轻点
+    static let hold: TimeInterval = 0.4
+    private var down = false
+    private var dirty = false          // 中间按过真键 = 它在当修饰键用,不算轻点
+    private var downAt = Date.distantPast
+
+    init(code: UInt16) { self.code = code }
+
+    mutating func otherKeyDown() { if down { dirty = true } }
+
+    /// 喂一个 flagsChanged。`has` = 这个事件里本键的修饰位还在不在。
+    /// 返回 true = 这是一次轻点,该触发。
+    mutating func feed(code c: UInt16, has: Bool, at: Date) -> Bool {
+        guard c == code else { return false }        // ⛔ 按下和松开都必须是**同一把键**
+        if has {
+            if !down || at.timeIntervalSince(downAt) > Self.hold {
+                down = true; dirty = false; downAt = at
+            }
+            return false
+        }
+        guard down else { return false }
+        down = false
+        return !dirty && at.timeIntervalSince(downAt) < Self.hold
+    }
+}
+
 /// 装一把全局开关键。三把(语音模式/静音/发送方式)走**同一条**路 ——
 /// ⛔ 复制三份 = 以后修一处漏两处,而漏掉的那两处正好是最少用到、最晚被发现的。
 func installToggleKey(_ cfgKey: String, default def: String, label: String,
@@ -2691,24 +2733,15 @@ func installToggleKey(_ cfgKey: String, default def: String, label: String,
         guard AXIsProcessTrusted() else {
             log("⚠ \(label) 需要辅助功能权限,当前没有 → 授权后重启即可用"); return
         }
-        var down = false
-        var otherKeyDuring = false
-        var downAt = Date()
+        var det = TapDetector(code: t.code)
         // 别的键按下 → 这次修饰键是在**当组合键的修饰键**用,不算轻点
         if let k = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { _ in
-            if down { otherKeyDuring = true }
+            det.otherKeyDown()
         }) { hotKeyMonitors.append(k) }
         if let m = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: { ev in
             guard !HotKey.capturing else { return }
-            let pressed = ev.modifierFlags.contains(t.flag) && ev.keyCode == t.code
-            if pressed && !down {
-                down = true; otherKeyDuring = false; downAt = Date()
-            } else if !ev.modifierFlags.contains(t.flag) && down {
-                down = false
-                // 轻点 = 按下到松开很短,且中间没按别的键。长按/当修饰键用都不算。
-                if !otherKeyDuring, Date().timeIntervalSince(downAt) < 0.4 {
-                    DispatchQueue.main.async { action() }
-                }
+            if det.feed(code: ev.keyCode, has: ev.modifierFlags.contains(t.flag), at: Date()) {
+                DispatchQueue.main.async { action() }
             }
         }) { hotKeyMonitors.append(m) }
         if let w = HotKey.warnReason(raw, forKey: cfgKey, others: HotKey.current()) {
@@ -3389,22 +3422,17 @@ if CommandLine.arguments.contains("--selftest-voice") {
     let fmt = eng.inputNode.outputFormat(forBus: 0)
     check(fmt.sampleRate > 0, "拿得到麦克风格式（采样率 \(Int(fmt.sampleRate))Hz）")
 
-    // 打断:必须能把正在播的掐掉。起一个真的 afplay 来打,不是嘴上说能打
-    let probe = FileManager.default.temporaryDirectory.appendingPathComponent("moss-shutup.aiff")
-    let mk = Process(); mk.launchPath = "/usr/bin/say"
-    mk.arguments = ["-v", "Tingting", "-o", probe.path, "这是一段用来测试打断的比较长的话，说完之前应该被掐掉。"]
-    try? mk.run(); mk.waitUntilExit()
-    if FileManager.default.fileExists(atPath: probe.path) {
-        let pl = Process(); pl.launchPath = "/usr/bin/afplay"; pl.arguments = [probe.path]
-        try? pl.run()
-        Thread.sleep(forTimeInterval: 0.6)
-        let wasPlaying = Speaker.isPlaying
+    // 打断:驱动**真机制** —— 正在念的那个进程写 PID 文件,打断靠碰令牌文件。
+    // ⛔ 原来这条起一个真 afplay 当探针,而 afplay 已经不是播放路径了 ——
+    //   那等于「拿一个产品里已经没有的东西去测产品」。而且它还会 pkill 掉 作者 正在听的音频。
+    do {
+        let t0 = TTS.shutUpToken()
+        TTS.markSpeaking(true)
+        check(Speaker.isPlaying, "有人在念时 isPlaying=true（常驻据此决定要不要掐）")
         Speaker.shutUp()
-        Thread.sleep(forTimeInterval: 0.4)
-        check(wasPlaying, "打断前确实在播（否则这条测了个寂寞）")
-        check(!Speaker.isPlaying, "你一开口能把正在播的掐掉（barge-in）")
-        pl.terminate()
-        try? FileManager.default.removeItem(at: probe)
+        check(TTS.shutUpToken() != t0, "打断会改变令牌 —— 正在念的那个进程看见就闭嘴")
+        TTS.markSpeaking(false)
+        check(!Speaker.isPlaying, "没人念时 isPlaying=false")
     }
 
     // ⛔ 灵敏度必须**改完立刻生效** —— 否则面板上那三个按钮就是装饰。
@@ -3457,6 +3485,10 @@ if CommandLine.arguments.contains("--selftest-voice") {
         let c = Controller.shared
         var got: [String] = []
         deliverProbe = { got.append($0) }
+        // ⛔ 2026-07-28:这一条原来**读 作者 的 config 当前置** —— check.sh 会把生产 config.json
+        //   拷进沙箱,于是 作者 哪天切到「一句一条」,这条断言就无缘无故变红,
+        //   而它测的东西跟发送方式压根没关系。**闸的前提必须由闸自己写死。**
+        setSendMode(to: "batch")
         VoiceMode.setOn(true)
         // 只要状态位,不要真麦 —— 否则环境音会触发 beginTurn 撤掉计时器,闸变成随机红
         VoiceLoop.shared.stop()
@@ -3482,11 +3514,19 @@ if CommandLine.arguments.contains("--selftest-voice") {
     }
     // ⛔ 作者 2026-07-28:「两种方式并行，不是让你用旧的替代掉」。
     // ⇒ **两条路都要有闸**。只守新路 = 切回一句一条那天它已经悄悄坏了,而没人知道。
+    //
+    // ⛔⛔ 2026-07-28 二修:这一条原来用 `setenv("TINGZHE_SEND_MODE")` 进入一句一条 ——
+    // 而 作者 进入它的方式是**按键/点面板 → `setSendMode()` → 写 config.json**。
+    // env 那条岔路**只有闸自己走**。于是"切换"整条动作(写 config、读回来、热重载)
+    // 从来没有被任何一项断言碰过,而 作者 报障的正是切换。
+    // **这是本仓第 4 次「闸测的是产品的副本」。** 现在改走产品那条:调 setSendMode 本尊。
+    // ⚠ 它会写 projectDir/config.json —— check.sh 里 TINGZHE_DIR 指向沙箱,不碰生产。
     do {
         let c = Controller.shared
         var got: [String] = []
         deliverProbe = { got.append($0) }
-        setenv("TINGZHE_SEND_MODE", "instant", 1)
+        setSendMode(to: "instant")
+        check(Composer.isInstant, "切到一句一条后，引擎读回来的就是一句一条（切换动作真的到得了发送逻辑）")
         VoiceMode.setOn(true); VoiceLoop.shared.stop(); Composer.discard()
         c.resetSeqForSelftest()
         c.probeDeliverInOrder(0, "第一句。")
@@ -3497,10 +3537,70 @@ if CommandLine.arguments.contains("--selftest-voice") {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
         deliverProbe = nil; VoiceMode.setOn(false)
-        unsetenv("TINGZHE_SEND_MODE")
         check(got == ["第一句。", "第二句。", "第三句。"],
               "一句一条模式：三段发**三条**、且按原顺序（实得 \(got.count) 条 \(got.joined(separator: "|"))）")
-        check(!Composer.isInstant, "env 撤掉后回到默认的攒成一条（两种模式不会互相粘住）")
+        // ⛔ 不传 to 就是**翻转** —— 快捷键走的正是这一条,而 作者 报障的就是"按了没反应"。
+        setSendMode()
+        check(!Composer.isInstant, "再切一次回到攒成一条（翻转那条路，也就是快捷键那条路）")
+        setSendMode()
+        check(Composer.isInstant, "再切一次又回到一句一条（来回切得动，不是切过去就卡住）")
+        setSendMode(to: "batch")
+    }
+
+    // ⛔⛔ 2026-07-28 作者:「不管我是否按一下键，它都跟另外一个模式完全一样」。
+    // 查实:发送逻辑没坏(上面那几条都绿),坏的是**按键到不了它** ——
+    // 10:46 重启后一整个下午,日志里「发送方式 →」只出现过一次。
+    // 而"轻点修饰键"的判据当时整个住在一个闭包里,**一条断言都没有**。
+    // ⇒ 抠成 TapDetector 纯结构体,这里喂真实事件序列。⚠ 时间戳是入参,不用 sleep。
+    do {
+        let ctrl = UInt16(kVK_Control), cmd = UInt16(kVK_Command)
+        let t0 = Date()
+        func at(_ s: TimeInterval) -> Date { t0.addingTimeInterval(s) }
+
+        var d = TapDetector(code: ctrl)
+        check(d.feed(code: ctrl, has: true, at: at(0)) == false
+              && d.feed(code: ctrl, has: false, at: at(0.1)) == true,
+              "轻点一下就触发（按下→100ms 后松开）")
+
+        d = TapDetector(code: ctrl)
+        _ = d.feed(code: ctrl, has: true, at: at(0))
+        check(d.feed(code: ctrl, has: false, at: at(0.9)) == false, "按住不放不算轻点（0.9 秒）")
+
+        d = TapDetector(code: ctrl)
+        _ = d.feed(code: ctrl, has: true, at: at(0))
+        d.otherKeyDown()                                   // ⌃C 里的那个 C
+        check(d.feed(code: ctrl, has: false, at: at(0.1)) == false,
+              "当组合键用不算轻点（⌃C 不会顺手切模式）")
+
+        // ⛔ 病 ①:松开那一侧原来不认键码 —— 按住 ⌃ 再按 ⌘、先松 ⌘,
+        //   那个事件里 .control 还在,可原代码判的是「本键的修饰位没了」,一样会被别的键的事件搅乱。
+        d = TapDetector(code: ctrl)
+        _ = d.feed(code: ctrl, has: true, at: at(0))
+        check(d.feed(code: cmd, has: false, at: at(0.05)) == false,
+              "别的键的 flagsChanged 不许当成本键松开（按下和松开都必须是同一把键）")
+        check(d.feed(code: ctrl, has: false, at: at(0.1)) == true,
+              "被别的键的事件插过一脚之后，本键自己松开照样算数")
+
+        // ⛔⛔ 病 ②(作者 报障的那个):**按下事件被吞掉一次,这把键就永久哑了**。
+        // 全局监听器漏事件是常态(切 Space、别的 app 抢焦点)。原代码的按下分支要求 `!down`,
+        // 于是 down 卡住之后 downAt 永远停在很久以前 ⇒ 松开时 `<0.4s` 恒假 ⇒ 从此不响。
+        d = TapDetector(code: ctrl)
+        _ = d.feed(code: ctrl, has: true, at: at(0))       // 按下
+        // …松开那个事件丢了(没喂进来)…
+        _ = d.feed(code: ctrl, has: true, at: at(30))      // 半分钟后你又按了一下
+        check(d.feed(code: ctrl, has: false, at: at(30.1)) == true,
+              "漏掉一个松开事件之后，下一次轻点照样触发（这把键不会就此永久哑掉）")
+    }
+
+    // ⛔⛔ 另一条能让三把键**同时**静悄悄哑掉的路(2026-07-28 查实):
+    // 点了面板上「改这把键」的行 → 进入捕获态 → 三把键的监听器全部 `guard !HotKey.capturing`,
+    // 而**关掉面板并不解除捕获** ⇒ 键全哑,且提示语跟着面板一起消失,你无从知道。
+    do {
+        HotKey.capturing = true
+        Picker.capturingKey = "voice_mode_key"
+        Picker.shared.close()
+        check(!HotKey.capturing && Picker.capturingKey == nil,
+              "关掉面板会结束按键捕获（否则三把开关键会一起哑，而且没有任何提示）")
     }
 
     do {   // join 里唯一不显然的那个分支:中文直接接、英文之间补空格
@@ -3781,7 +3881,7 @@ if CommandLine.arguments.contains("--selftest-speak") {
     check(!TTS.isSpeaking, "没人念的时候 isSpeaking=false")
     TTS.markSpeaking(true)
     check(TTS.isSpeaking, "正在念的时候 isSpeaking=true（常驻据此决定要不要掐）")
-    check(Speaker.isPlaying, "Speaker.isPlaying 认得流式那条路（只认 afplay 的话打断会静默失效）")
+    check(Speaker.isPlaying, "Speaker.isPlaying 认得流式那条路（2026-07-28 起它只认这一条）")
     try? Data("999999".utf8).write(to: TTS.speakingFlag)
     check(!TTS.isSpeaking, "陈旧 PID（进程已死）不算在念 —— 崩溃一次不会让打断永久卡住")
     TTS.markSpeaking(false)
