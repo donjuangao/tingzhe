@@ -908,8 +908,20 @@ final class VoiceLoop {
     func reconcile() {
         let want = VoiceMode.isOn && !VoiceMode.isMuted
         if want && !running { start() }
-        if !want && running { stop() }
+        // ⚠ 两条路不一样:静音 = 你说完了(保留并发出) · 关掉语音模式 = 你不要它了(丢弃)。
+        if !want && running {
+            if VoiceMode.isOn { finishAndStop() } else { stop() }
+        }
         StatusBar.shared.refresh()
+    }
+
+    /// 「我说完了」——把手上正在录的那段收尾、停麦、然后**立刻把攒的发出去**。
+    /// ⚠ 顺序不能反:先 endTurn(让这段进转写队列),再 stop(不丢),最后催 Composer。
+    ///   反过来先 stop 就把正在录的那段扔了,而那恰恰是你刚说完的话。
+    func finishAndStop() {
+        if speaking { endTurn() }        // 正在录 → 收尾送去转写,不是丢掉
+        stop(discardPending: false)
+        Composer.flushSoon()             // 转写还在路上时它会自己再等一轮
     }
 
     /// 「按状态该不该开着麦」—— 纯判断,不碰设备,闸可以放心验。
@@ -948,7 +960,11 @@ final class VoiceLoop {
         }
     }
 
-    func stop() {
+    /// ⛔⛔ 2026-07-28 作者:「我提前说完了想直接切静音，结果那句话就丢掉了」。
+    /// 病根:静音走的是 `stop()`,而 stop 里 `Composer.discard()` —— 攒着的话**直接销毁**。
+    /// **「我说完了」和「我不想说了」是两件事,代码把它们当成了一件。**
+    /// ⇒ 参数化:关语音模式 = 丢弃(你不要它了);静音 = **保留并立刻发出**(你只是说完了)。
+    func stop(discardPending: Bool = true) {
         guard running else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -965,8 +981,9 @@ final class VoiceLoop {
         engine = AVAudioEngine()
         running = false
         file = nil; fileURL = nil; speaking = false
-        // 攒着还没发的话跟着丢掉 —— 否则下次开麦会把上一场的半句话顶在最前面
-        Composer.discard()
+        // 攒着还没发的话:关掉语音模式时丢掉(否则下次开麦会把上一场的半句顶在最前面),
+        // 静音时**保留** —— 静音的语义是"我说完了",不是"我刚才那句不算"。
+        if discardPending { Composer.discard() }
         log("常开麦已停")
     }
 
@@ -1133,6 +1150,12 @@ enum Composer {
     static var isHolding: Bool {
         lock.lock(); defer { lock.unlock() }
         return inFlight > 0 || !buf.isEmpty
+    }
+
+    /// 立刻发(不等那 3.2 秒窗口)。⚠ 转写还在路上时 flush 会自己再排一轮,不会发半句。
+    static func flushSoon() {
+        lock.lock(); timer?.cancel(); timer = nil; lock.unlock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { flush() }
     }
 
     static func arm() {
@@ -1793,7 +1816,8 @@ enum VoiceMode {
             FileManager.default.createFile(atPath: f.path, contents: Data())
             // ⛔ 必须真的把引擎丢掉,不是"收进来但不发" —— 系统那个橙点看的是设备句柄。
             //   判据不是省 CPU,是**你能不能相信麦真的没在听**。
-            VoiceLoop.shared.stop()
+            // ⭐ 但要先把你刚说完的那句收尾并发出去 —— 见 finishAndStop 头注。
+            VoiceLoop.shared.finishAndStop()
             beep("Bottle")
         } else {
             try? FileManager.default.removeItem(at: f)
@@ -1822,13 +1846,18 @@ enum VoiceMode {
             beep("Hero")
         } else {
             try? FileManager.default.removeItem(at: f)
-            // ⛔ 关掉的同时必须掐掉正在念的 —— 否则"关上了却还在说话"
-            for p in ["afplay", "say"] {
-                let t = Process()
-                t.launchPath = "/usr/bin/pkill"
-                t.arguments = ["-x", p]
-                try? t.run()
-            }
+            // ⛔ 丢弃写在这里,不是靠 stop() 顺带做 —— stop() 开头有 `guard running`,
+            //   引擎没在跑时(比如你已经静音了)它直接返回,丢弃那一步**根本走不到**,
+            //   残句会留到下一场开麦时顶在最前面。闸当场抓到。
+            //   **清理动作不该挂在"某个别的东西当时在不在跑"上。**
+            Composer.discard()
+            // ⛔⛔ 2026-07-28 作者:「我把整个语音功能关掉了，它仍然在念被我打断的那段话」。
+            // 病根:这里原来有一份**复制的**掐话代码,只 pkill afplay/say ——
+            // 而念声音的早就挪进 `tingzhe --speak` 了,pkill 碰不到它 ⇒ 关掉了还在说。
+            // ⚠ 而 `Speaker.shutUp()` **一直是对的**(它发令牌)。
+            //   同一件事两处实现,只改了一处 —— 这是今天第三次同款。
+            // ⇒ 副本删掉,只留一个实现。以后再换播放方式,只有一个地方要改。
+            Speaker.shutUp()
             beep("Bottle")
         }
         log("语音模式: \(on ? "开" : "关")")
@@ -3489,6 +3518,36 @@ if CommandLine.arguments.contains("--selftest-voice") {
         check(got.first == "run fast", "英文碎片之间补空格（实得「\(got.first ?? "")」，不能是 runfast）")
     }
 
+    // ⛔⛔ 作者 2026-07-28:「我提前说完了想直接切静音，结果那句话就丢掉了」。
+    // 静音的语义是**「我说完了」**,不是「我刚才那句不算」——
+    // 而原来它走 stop() → Composer.discard(),攒着的话直接销毁。**丢数据。**
+    do {
+        VoiceMode.setOn(true); VoiceLoop.shared.stop(); Composer.discard()
+        Composer.append(raw: "我刚说完的这句", fixed: "我刚说完的这句", fired: false)
+        check(Composer.pendingCount == 1, "前置:缓冲里确实攒着一句")
+        VoiceMode.setMuted(true)
+        check(Composer.pendingCount == 1 || Composer.isHolding,
+              "**切静音没有把它扔掉**（原来这里 discard，实测丢话）")
+        var got: [String] = []
+        deliverProbe = { got.append($0) }
+        Composer.flushSoon()
+        let dl = Date().addingTimeInterval(1.5)
+        while Date() < dl && got.isEmpty {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        deliverProbe = nil
+        check(got == ["我刚说完的这句"], "而且**立刻发出去**，不用等那 3.2 秒窗口（实得 \(got)）")
+        VoiceMode.setMuted(false); VoiceMode.setOn(false); Composer.discard()
+    }
+    // 关掉语音模式仍然该丢弃 —— 那是"我不要它了",跟"我说完了"不是一件事
+    do {
+        VoiceMode.setOn(true); VoiceLoop.shared.stop()
+        Composer.append(raw: "不要的半句", fixed: "不要的半句", fired: false)
+        VoiceMode.setOn(false)
+        check(Composer.pendingCount == 0,
+              "关掉语音模式仍然丢弃缓冲（否则下次开麦会把上一场的半句顶在最前面）")
+    }
+
     // ── 单方面静音(作者 2026-07-28 咖啡馆要的) ──────────────────────
     VoiceMode.setOn(true)
     check(!VoiceMode.isMuted, "开语音模式时静音位是清的（否则会「打开了却听不见我」）")
@@ -3577,6 +3636,16 @@ if CommandLine.arguments.contains("--selftest-voice") {
     check(!VoiceLoop.shared.isRunning || ProcessInfo.processInfo.environment["TINGZHE_ALLOW_MIC"] == "1",
           "自检没有打开真麦克风（那条路能把转写结果 ⌘V 进你当时的窗口）")
 
+    // ⛔ 作者 2026-07-28:「我把整个语音功能关掉了，它仍然在念」。
+    // 关语音模式**必须发出打断令牌** —— 只 pkill afplay 碰不到 `--speak` 那个进程。
+    do {
+        VoiceMode.setOn(true)
+        let before = TTS.shutUpToken()
+        VoiceMode.setOn(false)
+        check(TTS.shutUpToken() != before,
+              "关语音模式会发出打断令牌（正在念的那个进程据此闭嘴）")
+    }
+
     // ⛔ 收尾必查:整段跑完,**生产状态位一个字节都不该动过**
     let prodAfter = FileManager.default.fileExists(atPath: prodFlag.path)
     let prodMutedAfter = FileManager.default.fileExists(atPath: prodMuted.path)
@@ -3600,8 +3669,19 @@ if CommandLine.arguments.contains("--selftest-voice") {
         check(false, "整段自检没碰生产状态位（跑前 \(prodBefore ? "开" : "关") → 跑后 \(prodAfter ? "开" : "关")；"
               + "常驻没在跑，那就只能是闸干的）")
     }
-    check(prodMutedBefore == prodMutedAfter,
-          "整段自检没碰生产静音位（跑前 \(prodMutedBefore ? "静音" : "在听") → 跑后 \(prodMutedAfter ? "静音" : "在听")）")
+    // ⛔ 跟上面 voice-on 那条同款:**分不清「闸动的」和「人动的」**。
+    //   2026-07-28 实测第三次假警报 —— 作者 在跑闸那几十秒里自己按了静音。
+    //   ⚠ 我上次只把 voice-on 改成了 race-aware,**漏了这一条** ——
+    //     同一个修复要改两处时,我又只改了一处(今天第二次)。
+    if prodMutedBefore == prodMutedAfter {
+        check(true, "整段自检没碰生产静音位（跑前后都是\(prodMutedAfter ? "静音" : "在听")）")
+    } else if daemonAlive {
+        print("     ℹ️  生产静音位在这几十秒里变了（\(prodMutedBefore ? "静音" : "在听") → "
+              + "\(prodMutedAfter ? "静音" : "在听")）—— 常驻在跑，多半是你自己按的。"
+              + "闸够不着生产（静音位在沙箱里，上面已验）。")
+    } else {
+        check(false, "整段自检没碰生产静音位（常驻没在跑，那就只能是闸干的）")
+    }
 
     if bad > 0 { print("✗ selftest-voice: \(bad) 项不过"); exit(1) }
     print("✓ selftest-voice: 开关落文件 · 切换正确 · 未撞既有手势 · 回声消除可开 · 打断有效 · 未碰生产状态")

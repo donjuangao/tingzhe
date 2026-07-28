@@ -1,19 +1,30 @@
 # 听着
 
-macOS 上的中文语音输入。按住一个键说话，松开，字就出现在你当前那个输入框里。
+**一个给 [Claude Code 桌面版](https://claude.com/claude-code) 做语音对话的 macOS 工具。**
 
-再往前一步：**打开语音对话，你说话它转写并发送，Claude 的回复它念给你听，你一开口它立刻闭嘴。**
+打开语音对话之后：你张嘴说话 → 它转写、修正专名、替你发送 → Claude 的回复它念给你听 →
+**你一开口，它立刻闭嘴**。中间你不用碰键盘，也不用点发送。
+
+这就是它被做出来的原因。下面所有设计（攒句子、打断、静音、会话选择）都是围着这件事转的。
+
+---
+
+它还有**另一半**：**按住一个键说话，松开，字就出现在你当前那个输入框里** —— 任何输入框，
+跟 Claude 无关。这半不需要 Claude Code，也能单独用，很多人可能只用这半。
+
+但先说清楚：**主线是前者。**
 
 ---
 
 ## ⚠ 先说清楚这东西靠什么
 
-这个项目分成两半，**依赖完全不同**，请对号入座：
+两半的依赖**完全不同**，装之前先对号入座：
 
 | | 靠什么 | 谁能用 |
 |---|---|---|
-| **按住说话**（语音转文字） | 任何 **OpenAI 兼容**的语音转写接口 | 任何人。默认接 [MOSS / MOSI](https://platform.mosi.cn)，换服务商只改 `api_base` 一个字符串 |
-| **语音对话**（它念给你听、你说它发送） | **Claude Code 桌面版** —— 只在这个上面实测过 | 见下 |
+| ⭐ **语音对话**（主线）<br>你说它发送、它念给你听 | **Claude Code 桌面版** + 一个语音接口 | 只在 Claude Code 桌面版上实测过，见下 |
+| **按住说话**（另一半）<br>按住键说话，字进任何输入框 | 只要一个语音接口 | 任何人。跟 Claude 无关，单独能用 |
+| **两半都要的** | 一个 **OpenAI 兼容**的语音接口的 **API key** | ⛔ 仓库里**不含任何密钥**，你得自己去服务商申请。默认接 [MOSS / MOSI](https://platform.mosi.cn)，换服务商只改 `api_base` 一个字符串 |
 
 **为什么语音对话离不开 Claude Code**：它要在 Claude 回答完的那一刻拿到回复正文才能念，而这件事只有 Claude Code 的 hook 机制能告诉它。它挂的是 `Stop` / `UserPromptSubmit` 钩子，读的是 Claude Code 的会话记录。
 
@@ -94,9 +105,30 @@ MOSS 那版只剩 `grip→grep`、`front matter→frontmatter`，**词表一条�
 
 ```bash
 git clone https://github.com/donjuangao/tingzhe.git && cd tingzhe
-cp env.example .env.local        # 填进你的 API key
+cp env.example .env.local
 ./build.sh
 ```
+
+### 填你自己的 API key
+
+`env.example` 是一个**空模板**，长这样（仓库里就这一行，没有值）：
+
+```
+TINGZHE_API_KEY=
+```
+
+拷成 `.env.local` 之后，把你自己在服务商那里申请的 key 填在等号后面。默认服务商是
+[MOSS / MOSI](https://platform.mosi.cn)；换成任何 OpenAI 兼容的服务，就填那家的 key，
+再改 `config.json` 里的 `api_base`。
+
+**这个 key 是你的，不经过我，也不经过这个仓库：**
+
+- ⛔ 仓库里**不含任何密钥** —— 你现在看到的每一个文件都在 GitHub 上公开可读，自己翻一遍就知道
+- `.env.local` 被 `.gitignore` 挡着，不会被你误提交
+- `./check.sh` 还会再查一遍：工作树里有没有密钥字面量、**git 历史里有没有**，两处都扫
+- 请求直接从你的机器发到你填的那个 `api_base`，没有中间人
+
+没填 key 的话，程序启动时会直接告诉你去哪个文件填，不会静默失败。
 
 第一次跑要给两个权限：
 

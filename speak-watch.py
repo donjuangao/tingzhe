@@ -144,6 +144,12 @@ def main():
 
     # ⛔ 从**当前末尾**开始盯，不回放历史 —— 否则一开语音模式就把整段历史念一遍
     #    (作者 2026-07-28 明确点过这个:「第二次打开的时候不用再继续听它的语音」)
+    # ⛔⛔ 2026-07-28 实测(speak.log 10:30:28 打断 → 10:30:50 又自己念起来了):
+    # 原来用 `break` 表示"整轮闭嘴",而 break 只丢掉**这一批读到的行** ——
+    # 一轮回复是分很多批陆续写进 transcript 的,0.7 秒后下一批到了它照念不误。
+    # 注释写着「整轮闭嘴」,代码做的是「跳过这一批」,**两回事**。
+    # ⇒ 「本轮」的真边界是**下一次用户说话**。打断之后一直哑,直到 transcript 里出现新的 user 行。
+    muted = False
     seen = set()
     pos = tp.stat().st_size
     log(f"开始盯 {sid[:8]} 的 transcript（从当前末尾）")
@@ -161,12 +167,20 @@ def main():
                         r = json.loads(line)
                     except Exception:
                         continue
+                    if r.get("type") == "user":
+                        # 你又说话了 = 新的一轮开始 → 解除静默
+                        if muted:
+                            log("你又开口了 → 新一轮，恢复念")
+                        muted = False
+                        continue
                     if r.get("type") != "assistant":
                         continue
                     uid = r.get("uuid") or ""
                     if uid in seen:
                         continue
-                    seen.add(uid)
+                    seen.add(uid)          # ⚠ 静默期也要标记,否则解除后会把攒下的一起补念
+                    if muted:
+                        continue
                     c = r.get("message", {}).get("content", [])
                     txt = "".join(b.get("text", "") for b in c
                                   if isinstance(b, dict) and b.get("type") == "text")
@@ -176,10 +190,11 @@ def main():
                     if not spoken:
                         continue
                     if not speak_stream(spoken):
-                        # ⛔ 必须 break 不是 continue:你开口打断我,是要我**整轮**闭嘴,
-                        #   不是只跳过这一段然后接着念下一段(那就等于没打断)。
-                        log("被打断/失败 → 本轮剩下的都不念了")
-                        break
+                        # ⛔ 不是 break —— break 只丢掉这一批,下一批照念(实测 22 秒后又响)。
+                        #   置静默位,直到你下次开口才解除。**这才是"整轮闭嘴"。**
+                        muted = True
+                        log("被打断 → 整轮闭嘴，直到你下次开口")
+                        continue
                     log(f"念完一段（{len(spoken)} 字）")
                 idle = 0
             else:
@@ -230,6 +245,25 @@ def _selftest():
             break
     check(calls == ["甲", "乙"],
           f"被打断后不再念下一段（实得 {calls}；接着念下去等于没打断）")
+
+    # ⛔⛔ 2026-07-28 实测的真 bug:打断之后 22 秒它又自己念起来了。
+    # 原因是拿 `break` 当"整轮闭嘴",而 break 只丢掉**这一批读到的行** ——
+    # 一轮回复分很多批陆续写进 transcript。注释说的和代码做的不是一回事。
+    # ⇒ 这一条把"整轮"的真边界钉住:**打断之后一直哑，直到出现新的 user 行**。
+    # ⚠ 必须**去掉注释再判** —— 第一版直接在源码里搜 "break",而我正是在注释里解释
+    #   "不要用 break",那句解释自己把断言判红了。**文本匹配的闸对注释和代码一视同仁。**
+    src_main = src[src.index("def main():"):src.index("def _selftest():")]
+    code = "\n".join(l for l in src_main.splitlines() if not l.lstrip().startswith("#"))
+    after = code.split("speak_stream(spoken)")[1][:300]
+    check("muted = True" in after and "break" not in after,
+          "打断用的是静默位，不是 break（break 只挡住这一批，下一批照念）")
+    check('r.get("type") == "user"' in code and "muted = False" in code,
+          "只有你再次开口才解除静默（这才是「本轮」的真边界）")
+    # ⚠ `if muted:` 有两处(解除那处 + 跳过那处),要找的是**跳过**那处 ——
+    #   第一版用 .index() 拿到了前面那个,判了个不相干的顺序。
+    skip = code.index("if muted:", code.index("seen.add(uid)"))
+    check(code.index("seen.add(uid)") < skip,
+          "静默期也把行标记成已读 —— 否则解除后会把攒下的一起补念")
 
     if bad:
         print(f"✗ speak-watch selftest: {bad} 项不过")
