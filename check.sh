@@ -4,16 +4,16 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-# ⛔ F5(独立复核实测):二进制的 projectDir 硬编码 ~/Downloads/moss-connect（或 MOSS_CONNECT_DIR），
+# ⛔ F5(独立复核实测):二进制的 projectDir 硬编码 ~/Downloads/tingzhe（或 TINGZHE_DIR），
 # **与 cwd 无关**。于是在任何 clone / git worktree 里跑闸：第 3/4 项验你改的表，
 # 第 8/9/10 项和 --apply 验的是生产那张表，两半互不知情却都打绿；
 # 更糟的是第 10 项 --selftest-reload 会**写**生产 dict.json。项目自己的派工规范用 worktree。
 # → 把引擎的项目目录钉到本 checkout。
-export MOSS_CONNECT_DIR="$PWD"
+export TINGZHE_DIR="$PWD"
 
 FAIL=0
-BIN0="moss-ptt.app/Contents/MacOS/moss-ptt"
-DEVBIN="build/dev/moss-ptt"
+BIN0="tingzhe.app/Contents/MacOS/tingzhe"
+DEVBIN="build/dev/tingzhe"
 pass() { printf "  ✅ %s\n" "$1"; }
 fail() { printf "  ❌ %s\n" "$1"; FAIL=1; }
 warn() { printf "  ⚠️  %s\n" "$1"; }
@@ -27,10 +27,10 @@ for f in dict.json canon.json protect.json config.json .env.local; do
 done
 trap 'rm -rf "$SANDBOX"' EXIT
 
-# ⛔ 刚 clone 下来的状态:没有 moss-ptt.app,于是第 6/7/8/10/12 项全红,
+# ⛔ 刚 clone 下来的状态:没有 tingzhe.app,于是第 6/7/8/10/12 项全红,
 # 而红的原因跟他的代码毫无关系 —— 满屏「踩过的坑 #1 的形状」是最劝退的第一印象。
 # ⇒ 一条能照做的话,而不是八条吓人的红。⚠ 仍然 exit 非零:**没测就是没测**,不假装通过。
-if [ ! -x "moss-ptt.app/Contents/MacOS/moss-ptt" ]; then
+if [ ! -x "tingzhe.app/Contents/MacOS/tingzhe" ]; then
   echo "⚪ 还没构建过 —— 有 5 项要拿真的 app 才能测（启动/主路径/热重载/语音开关…）"
   echo
   echo "   先跑：./build.sh"
@@ -42,7 +42,7 @@ fi
 
 echo "[1/12] 编译（--dev · ⛔ 闸不许有破坏性副作用）"
 # ⛔ F3(2026-07-26 独立复核实测):原来这里跑的是**非 --dev** 的 build.sh ——
-# 于是每一次收尾跑闸都覆盖真 moss-ptt.app 一次,把刚加的 `--dev` 安全路径整个绕掉了。
+# 于是每一次收尾跑闸都覆盖真 tingzhe.app 一次,把刚加的 `--dev` 安全路径整个绕掉了。
 # 本项目要求「收尾必跑 ./check.sh」⇒ 闸自己成了掉权限的主要来源。
 # **闸的职责是判定,不是改变被判对象。** 编译检查用 --dev 就够。
 # 真 app 是否落后于源码,单独报（见下方 ⓪），由 作者 决定何时正式构建。
@@ -65,7 +65,7 @@ if [ -x "$BIN0" ]; then
   if [ -z "$NEWER" ]; then
     pass "真 app 不比源码旧"
   else
-    warn "真 app 落后于源码 → 想生效跑 MOSS_REAL_BUILD=1 ./build.sh（⛔ 会打掉辅助功能授权）"
+    warn "真 app 落后于源码 → 想生效跑 TINGZHE_REAL_BUILD=1 ./build.sh（⛔ 会打掉辅助功能授权）"
     printf '     比它新的: %s\n' $NEWER
   fi
 fi
@@ -83,7 +83,7 @@ try:
     #   抄的那份 2026-07-28 落后了:pttChoices 扩到 9 个,闸还是 5 个,
     #   作者 从面板选 leftOption 就判红 —— 而产品是对的。
     import subprocess as _sp
-    _eng = os.environ.get("MOSS_ENGINE", "build/dev/moss-ptt")
+    _eng = os.environ.get("TINGZHE_ENGINE", "build/dev/tingzhe")
     _r = _sp.run([_eng, "--list-ptt-keys"], capture_output=True, text=True)
     allowed = {x.strip().lower() for x in _r.stdout.split() if x.strip()}
     # ⛔ F9(2026-07-26 独立复核实测):原允许集里带着 rightCommand —— 而 config.json 与
@@ -171,9 +171,9 @@ echo "[4/12] 词表回归（拿真实错例断言修复效果 · ⛔ 走真引�
 ENGINE=""
 [ -x "$DEVBIN" ] && ENGINE="$DEVBIN"
 [ -z "$ENGINE" ] && [ -x "$BIN0" ] && ENGINE="$BIN0"
-export MOSS_ENGINE="$ENGINE"
+export TINGZHE_ENGINE="$ENGINE"
 if [ -z "$ENGINE" ]; then
-  fail "找不到可用引擎（build/dev/moss-ptt 或 moss-ptt.app）"
+  fail "找不到可用引擎（build/dev/tingzhe 或 tingzhe.app）"
 else
   printf "  引擎 = %s\n" "$ENGINE"
   python3 - "$ENGINE" <<'EOF'
@@ -193,7 +193,7 @@ def norm(s):
 # 而写死的用例只证明"作者那三条规则还在"。
 # ⚠ 读的是 dict.json,没有就退回 dict.example.json —— 跟程序自己那条退回路径同一个口径。
 import json, os
-proj = os.environ.get("MOSS_CONNECT_DIR") or os.path.dirname(os.path.abspath(__file__))
+proj = os.environ.get("TINGZHE_DIR") or os.path.dirname(os.path.abspath(__file__))
 rules = []
 for n in ("dict.json", "dict.example.json"):
     p = os.path.join(proj, n)
@@ -238,7 +238,7 @@ if [ -d .git ]; then
   RED='s/sk-[A-Za-z0-9_-]*/sk-<REDACTED>/g'
   # ① 工作区全部文件（含未跟踪），排掉 .git / 二进制 / gitignore 掉的语音文件
   WT=$(grep -rIlE "$KEYPAT" . \
-        --exclude-dir=.git --exclude-dir=build --exclude-dir=moss-ptt.app \
+        --exclude-dir=.git --exclude-dir=build --exclude-dir=tingzhe.app \
         --exclude-dir=__pycache__ --exclude=check.sh --exclude=.env.local 2>/dev/null || true)
   # ② git 历史
   # ⛔ 用**真实密钥形态**(sk- 后接 ≥20 位),不是裸 "sk-" ——
@@ -260,14 +260,14 @@ else
 fi
 
 echo "[6/12] 启动冒烟"
-BIN="moss-ptt.app/Contents/MacOS/moss-ptt"
+BIN="tingzhe.app/Contents/MacOS/tingzhe"
 if [ ! -x "$BIN" ]; then
-  # ⛔ C-6:fresh clone 里 moss-ptt.app 是 gitignore 的 → 这条是**新克隆的默认状态**,
-  # 只报「不存在」而不说下一步 = 让人自己猜。且正式构建需要 MOSS_REAL_BUILD=1(裸跑退 3)。
+  # ⛔ C-6:fresh clone 里 tingzhe.app 是 gitignore 的 → 这条是**新克隆的默认状态**,
+  # 只报「不存在」而不说下一步 = 让人自己猜。且正式构建需要 TINGZHE_REAL_BUILD=1(裸跑退 3)。
   fail "$BIN 不存在或不可执行 —— 新克隆的默认状态（app bundle 不入库）"
-  printf "     要装常驻/走完整闸: MOSS_REAL_BUILD=1 ./build.sh && ./install-agent.sh install\n"
+  printf "     要装常驻/走完整闸: TINGZHE_REAL_BUILD=1 ./build.sh && ./install-agent.sh install\n"
   printf "     只想跑纯文本自检: ./build.sh --dev（其余各项都会用它,不需要 app）\n"
-elif pgrep -f "^$PWD/moss-ptt.app/Contents/MacOS/moss-ptt$" >/dev/null; then
+elif pgrep -f "^$PWD/tingzhe.app/Contents/MacOS/tingzhe$" >/dev/null; then
   # 已有实例在跑（多半是常驻 LaunchAgent）→ 起不来是**正确行为**，不是故障。
   # 此时改验两件同样有效的事，避免闸因常驻而永远红（闸永远红 = 人开始忽略它 = 闸失效）。
   # ⛔ 别写成 `"$BIN" 2>&1 | grep -q ...` —— 本脚本开了 pipefail，而 $BIN 被锁拒时
@@ -279,19 +279,19 @@ elif pgrep -f "^$PWD/moss-ptt.app/Contents/MacOS/moss-ptt$" >/dev/null; then
   # ② **能把闸挂死**：万一 $BIN 真拿到锁，它会一路走到 `app.run()` 永不返回，
   #    而 `$(...)` 会一直等 → 闸卡住不是红也不是绿。必须给它硬超时。
   for _ in 1 2 3 4 5 6; do
-    A=$(pgrep -f "^$PWD/moss-ptt.app/Contents/MacOS/moss-ptt$" | head -1 || true)
+    A=$(pgrep -f "^$PWD/tingzhe.app/Contents/MacOS/tingzhe$" | head -1 || true)
     sleep 1
-    B=$(pgrep -f "^$PWD/moss-ptt.app/Contents/MacOS/moss-ptt$" | head -1 || true)
+    B=$(pgrep -f "^$PWD/tingzhe.app/Contents/MacOS/tingzhe$" | head -1 || true)
     [ -n "$A" ] && [ "$A" = "$B" ] && break
   done
   LOCKOUT=""
   for _ in 1 2 3; do
     # 后台起 + 2 秒后杀 —— 拿到锁也不会把闸挂住（macOS 无 timeout(1)，用这个既有模式）
     LOCKOUT=$("$BIN" 2>&1 & P=$!; sleep 2; kill "$P" 2>/dev/null; wait "$P" 2>/dev/null) || true
-    grep -q "已有一个 moss-ptt 在跑" <<<"$LOCKOUT" && break
+    grep -q "已有一个 tingzhe 在跑" <<<"$LOCKOUT" && break
     sleep 1
   done
-  if grep -q "已有一个 moss-ptt 在跑" <<<"$LOCKOUT"; then
+  if grep -q "已有一个 tingzhe 在跑" <<<"$LOCKOUT"; then
     pass "已有实例在跑；单实例锁正确拒绝了第二个"
   else
     fail "已有实例在跑，但第二个没被锁拒 —— 会双注册热键（按一次录两次）"
@@ -299,10 +299,10 @@ elif pgrep -f "^$PWD/moss-ptt.app/Contents/MacOS/moss-ptt$" >/dev/null; then
   fi
   # 读程序自己写的 app.log —— launchd 的 err.log 在 open -a 时期会空/滞后，
   # 用它判断权限状态会给出过期结论（2026-07-25 踩到：权限已好而闸仍 WARN）
-  # ⛔ F-6(独立复核实测):原来这里硬编 $HOME —— 而引擎认 MOSS_LOG_DIR,闸不认。
-  # 后果:独立复核在 /private/tmp 的副本里跑闸、MOSS_LOG_DIR 指向自己的假目录,
+  # ⛔ F-6(独立复核实测):原来这里硬编 $HOME —— 而引擎认 TINGZHE_LOG_DIR,闸不认。
+  # 后果:独立复核在 /private/tmp 的副本里跑闸、TINGZHE_LOG_DIR 指向自己的假目录,
   # 第 6 项却报出了**生产守护进程**的时间戳 → 判的是 A checkout,权限结论来自 B 的进程。
-  LOG="${MOSS_LOG_DIR:-$HOME/Library/Logs/moss-ptt}/app.log"
+  LOG="${TINGZHE_LOG_DIR:-$HOME/Library/Logs/tingzhe}/app.log"
   # ⛔ 别用 `tail -N` 取"最后一次启动" —— N 靠猜，噪音一多就静默失准
   # （2026-07-26 实测：我新加的第 8/10 项往 app.log 塞了 6 行，就把权限那两行挤出了 tail -8，
   #   于是这一整块降级成「读不到常驻日志」的 WARN，我刚加的红闸一次都没响过）。
@@ -314,15 +314,15 @@ elif pgrep -f "^$PWD/moss-ptt.app/Contents/MacOS/moss-ptt$" >/dev/null; then
     # ⛔ 2026-07-26:从 warn 升为 fail。理由 = 本 session 踩过的坑:build.sh 第一次构建就打了
     # 「授权已失效」的警告，我读到了、又连构建五次，作者 整个 session 都在退化状态下用工具而不知道。
     # 一句 warn 没有任何东西依赖它 = 等于不存在。退化状态必须让闸变红,否则它是隐形的。
-    # 真要接受退化：MOSS_ACCEPT_NO_AX=1 ./check.sh（显式认账，不是默认静默）
+    # 真要接受退化：TINGZHE_ACCEPT_NO_AX=1 ./check.sh（显式认账，不是默认静默）
     if grep -q "未授辅助功能权限" <<<"$SEG"; then
-      if [ "${MOSS_ACCEPT_NO_AX:-0}" = "1" ]; then
-        warn "常驻实例无辅助功能权限（已由 MOSS_ACCEPT_NO_AX=1 显式接受）"
+      if [ "${TINGZHE_ACCEPT_NO_AX:-0}" = "1" ]; then
+        warn "常驻实例无辅助功能权限（已由 TINGZHE_ACCEPT_NO_AX=1 显式接受）"
       else
         fail "常驻实例无辅助功能权限 → 热键退化为三键 ⌃⌥Space、自动粘贴退化为只进剪贴板"
-        printf "     恢复: 系统设置 → 隐私与安全性 → 辅助功能 → 移除旧 moss-ptt → 重加 %s/moss-ptt.app → ./install-agent.sh install\n" "$(pwd)"
+        printf "     恢复: 系统设置 → 隐私与安全性 → 辅助功能 → 移除旧 tingzhe → 重加 %s/tingzhe.app → ./install-agent.sh install\n" "$(pwd)"
         [ -f .ax-regrant-needed ] && printf "     （授权是在 %s 的那次构建里被打掉的）\n" "$(cat .ax-regrant-needed)"
-        printf "     接受退化状态: MOSS_ACCEPT_NO_AX=1 ./check.sh\n"
+        printf "     接受退化状态: TINGZHE_ACCEPT_NO_AX=1 ./check.sh\n"
       fi
     else
       # ⛔ F12(独立复核实测):原来这里无条件 `rm -f .ax-regrant-needed`。
@@ -357,12 +357,12 @@ else
   # → 正式构建打掉授权后,不装 agent 的用法拿到的是 **绿灯 + 三键热键 + 只进剪贴板**,
   # 正是 build.sh 花了十几行注释要消灭的那个状态。红闸不能只覆盖一半用法。
   if grep -q "未授辅助功能权限" <<<"$OUT" || [ -f .ax-regrant-needed ]; then
-    if [ "${MOSS_ACCEPT_NO_AX:-0}" = "1" ]; then
-      warn "无辅助功能权限（已由 MOSS_ACCEPT_NO_AX=1 显式接受）"
+    if [ "${TINGZHE_ACCEPT_NO_AX:-0}" = "1" ]; then
+      warn "无辅助功能权限（已由 TINGZHE_ACCEPT_NO_AX=1 显式接受）"
     else
       fail "无辅助功能权限 → 热键退化为三键 ⌃⌥Space、自动粘贴退化为只进剪贴板"
       [ -f .ax-regrant-needed ] && printf "     （授权是在 %s 的那次构建里被打掉的）\n" "$(cat .ax-regrant-needed)"
-      printf "     接受退化状态: MOSS_ACCEPT_NO_AX=1 ./check.sh\n"
+      printf "     接受退化状态: TINGZHE_ACCEPT_NO_AX=1 ./check.sh\n"
     fi
   fi
 fi
@@ -380,10 +380,10 @@ echo "[7/12] 主路径自检（⛔ 驱动生产路径，不是它的副本）"
 if [ -x "$DEVBIN" ]; then
   # ⛔ F-8:闸不许有破坏性副作用,而这一项每跑一次就往**生产**日志目录追加 transcripts-selftest.jsonl。
   # 走沙箱日志目录 —— 断言的内容一个字不变(它测的是代码路径,不是日志落在哪)。
-  MP=$(MOSS_SELFTEST_MAINPATH=1 MOSS_LOG_DIR="$SANDBOX/logs" "$DEVBIN" --selftest-mainpath 2>&1 || true)
+  MP=$(TINGZHE_SELFTEST_MAINPATH=1 TINGZHE_LOG_DIR="$SANDBOX/logs" "$DEVBIN" --selftest-mainpath 2>&1 || true)
   if grep -q "✓ selftest-mainpath" <<<"$MP"; then
     pass "生产路径 startRecording → stopAndTranscribe → 词表 → deliver 全通"
-  elif grep -qE "需要 MOSS_SELFTEST_MAINPATH|Unknown|unrecognized" <<<"$MP" || [ -z "$MP" ]; then
+  elif grep -qE "需要 TINGZHE_SELFTEST_MAINPATH|Unknown|unrecognized" <<<"$MP" || [ -z "$MP" ]; then
     fail "dev 二进制不支持 --selftest-mainpath（构建没跟上？跑 ./build.sh --dev）"
   else
     fail "生产路径不通（踩过的坑 #1 的形状：录音时长 guard 或转写链路断了）"
@@ -407,8 +407,8 @@ if [ -x "$BIN" ]; then
     fail "录音主路径不通（$(tail -1 <<<"$REC")）"   # 不再第二次启麦克风
   fi
 fi
-# 端到端真调 API 会花积分,默认不跑;要跑:MOSS_CHECK_E2E=1 ./check.sh
-if [ "${MOSS_CHECK_E2E:-0}" = "1" ] && [ -x "$BIN" ]; then
+# 端到端真调 API 会花积分,默认不跑;要跑:TINGZHE_CHECK_E2E=1 ./check.sh
+if [ "${TINGZHE_CHECK_E2E:-0}" = "1" ] && [ -x "$BIN" ]; then
   R=$("$BIN" --selftest-transcribe "record baseline/t6.m4a" 2>&1 | tail -1)
   grep -q "运营" <<<"$R" && pass "端到端转写通（${R}）" || fail "端到端转写异常: $R"
 fi
@@ -445,7 +445,7 @@ if [ -n "$ENGINE" ] && [ -f canon.json ]; then
   if [ -n "$DROPPED" ]; then
     NDROP=$(grep -c "canon 跳过" <<<"$DROPPED")
     warn "canon.json 里 $FILEN 条，但引擎**丢弃了 $NDROP 条**（kCanonMinHan 门槛）→ 生效的只有 $((FILEN-NDROP)) 条"
-    sed 's/^\[moss-ptt\] /       /' <<<"$DROPPED"
+    sed 's/^\[tingzhe\] /       /' <<<"$DROPPED"
     printf "       ⚠ 上面那句「结构合法（%s 条）」说的是**文件里有几条**,不是生效几条 —— 判断请用这里的数\n" "$FILEN"
   fi
 fi
@@ -453,7 +453,7 @@ fi
 # 重写就是重写一个**不同的东西**（第 4 项曾犯过这个错,见其注释）。
 if [ -n "$ENGINE" ]; then
   # ⛔ 用 $ENGINE 不用 ${BIN}：这是**纯文本**自检,零权限需求,build.sh 自己的 --help
-  # 也逐字写着「纯文本自检可直接跑,例：build/dev/moss-ptt --selftest-boundary」。
+  # 也逐字写着「纯文本自检可直接跑,例：build/dev/tingzhe --selftest-boundary」。
   # 用 $BIN(app bundle) = 在 --dev 迭代纪律下永远替一个越来越旧的二进制背书。
   SC=$("$ENGINE" --selftest-canon 2>&1)
   if grep -q "✓ selftest-canon" <<<"$SC"; then
@@ -469,7 +469,7 @@ echo "[9/12] 词边界护栏 + 词表对真实语料的误伤扫描"
 # 两半是同一件事:护栏(断言修好了) + 扫描(测量还有没有)。
 # 护栏的正例来源 = 真实语料里实测的那 4 次误伤,不是自撰样本。
 if [ -n "$ENGINE" ]; then
-  # ⛔ 同上必须是 $ENGINE —— 本项后半（语料扫描）已经走 MOSS_ENGINE,
+  # ⛔ 同上必须是 $ENGINE —— 本项后半（语料扫描）已经走 TINGZHE_ENGINE,
   # 前后半用不同二进制会打出**同屏自相矛盾**的输出（独立复核注入护栏失效实测:
   # 前半 ✅「护栏生效」紧挨着后半 ❌ 七条,一个人看了无法判断护栏到底在不在）。
   BD=$("$ENGINE" --selftest-boundary 2>&1)
@@ -488,12 +488,12 @@ fi
 # ⛔ 2026-07-28 开源化:这里原来硬编码作者本人的 语料库 路径,而且**找不到就判红** ——
 # 对刚 clone 下来的人,那是一条永远红的闸,而它红的原因跟他的代码毫无关系。
 # ⇒ 分两种情况,判据是「**你配了没有**」而不是「文件在不在」:
-#    · 配了(MOSS_CORPUS 有值)但路径不存在 → 判红,那是配错了
+#    · 配了(TINGZHE_CORPUS 有值)但路径不存在 → 判红,那是配错了
 #    · 压根没配 → ⚪ 本项不适用。⛔ 不是"通过",是**没测** —— 说清楚它本来会测什么。
 # ⚠ 踩过的坑仍然守着:原病是「语料库 改名/换机器 → 闸静默消失还报全绿」。
 #   那属于"配了但没了"这一支,照旧判红。
 CORPUS_SET=0
-CORPUS="${MOSS_CORPUS:-}"
+CORPUS="${TINGZHE_CORPUS:-}"
 if [ -n "${CORPUS}" ]; then
   CORPUS_SET=1
 else
@@ -504,18 +504,18 @@ if [ "$CORPUS_SET" = "0" ]; then
   echo "  ⚪ 没配语料库 → 本项不适用（**没测**，不是通过）"
   echo "     它本来测什么：拿一大批真实中文文本跑一遍词表，看规则会不会误伤真词"
   echo "     （例：规则 \`the propose\` 会吃掉 \`the proposed\`）"
-  echo "     配上就能测：MOSS_CORPUS=/一个装满你日常文字的目录 ./check.sh"
+  echo "     配上就能测：TINGZHE_CORPUS=/一个装满你日常文字的目录 ./check.sh"
 elif [ ! -d "${CORPUS}" ]; then
-  # ⛔ 2026-07-26 两个独立复核各自实测:原来这里是 warn+跳过 → `MOSS_CORPUS=/nonexistent ./check.sh`
-  # 直接 `✅ 全绿 · EXIT=0`,连 🟡 都不打(MOSS_CORPUS 当时不在 ESCAPES 里)。
+  # ⛔ 2026-07-26 两个独立复核各自实测:原来这里是 warn+跳过 → `TINGZHE_CORPUS=/nonexistent ./check.sh`
+  # 直接 `✅ 全绿 · EXIT=0`,连 🟡 都不打(TINGZHE_CORPUS 当时不在 ESCAPES 里)。
   # 换机器 / 语料库 改名 / 别人 clone —— 这道闸**静默消失且报全绿**。
   # 这正是本项 MIN_CHARS 下限要防的那件事换了个分支复发:守住了「语料太小」,没守住「没有语料」。
-  if [ "${MOSS_ALLOW_NO_CORPUS:-0}" = "1" ]; then
-    warn "找不到语料库 ${CORPUS}，跳过误伤扫描（已由 MOSS_ALLOW_NO_CORPUS=1 显式接受）"
+  if [ "${TINGZHE_ALLOW_NO_CORPUS:-0}" = "1" ]; then
+    warn "找不到语料库 ${CORPUS}，跳过误伤扫描（已由 TINGZHE_ALLOW_NO_CORPUS=1 显式接受）"
   else
     fail "找不到语料库 $CORPUS —— 本项无法测量,不是通过"
-    printf "     指定语料库: MOSS_CORPUS=/path ./check.sh\n"
-    printf "     确实要跳过: MOSS_ALLOW_NO_CORPUS=1 ./check.sh（会标 🟡 不算全绿）\n"
+    printf "     指定语料库: TINGZHE_CORPUS=/path ./check.sh\n"
+    printf "     确实要跳过: TINGZHE_ALLOW_NO_CORPUS=1 ./check.sh（会标 🟡 不算全绿）\n"
   fi
 else
   python3 - "$CORPUS" <<'EOF'
@@ -525,7 +525,7 @@ import os as _os
 def _uf(n): return n if _os.path.exists(n) else n.replace(".json", ".example.json")
 rules = [tuple(x) for x in json.load(open(_uf('dict.json')))]
 # ⛔⛔ 2026-07-26 独立复核抓出 + 我自己复验:**基率数字已被本项目自己的文字 100% 污染**。
-# 实测:`星规/林盾/星盾/临盾` 在整个 语料库 出现 43/6/22/6 次 —— **全部在 moss-connect
+# 实测:`星规/林盾/星盾/临盾` 在整个 语料库 出现 43/6/22/6 次 —— **全部在 tingzhe
 # 自己的文档与 log.md 里**(我们讨论这些规则时写下的),其余约 海量 **0 次**。
 # 而当时正拿「在 真实写作语料里出现 0 次」当作「别再要求 作者 造负例句」的依据。
 #
@@ -536,7 +536,7 @@ rules = [tuple(x) for x in json.load(open(_uf('dict.json')))]
 #    判据只看独立那一半;自指那一半仍要显示(它是我们写得多不是产品坏了)。
 def is_self_doc(path):
     r = os.path.relpath(path, 语料库)
-    return ("moss-connect" in r) or r == "notes/log.md"
+    return ("tingzhe" in r) or r == "notes/log.md"
 
 # SKIP 只保留一个用途:整档就是错例清单的文件(评测集),它连"自指"都不算,是**答案**。
 SKIP = {"_评测集-v1-2026-07-25.md"}
@@ -605,18 +605,18 @@ MIN_CHARS = 1_000_000
 print(f"  语料 {chars:,} 字符（含 raw/）· 规则命中 {dict(hits) or '无'}")
 if chars < MIN_CHARS:
     print(f"  ❌ 语料只有 {chars:,} 字符（< {MIN_CHARS:,} 下限）—— 这道闸在这种语料上没有判别力")
-    print(f"     设 MOSS_CORPUS 指向真实语料库，或显式接受：MOSS_ALLOW_SMALL_CORPUS=1")
-    if os.environ.get("MOSS_ALLOW_SMALL_CORPUS") != "1":
+    print(f"     设 TINGZHE_CORPUS 指向真实语料库，或显式接受：TINGZHE_ALLOW_SMALL_CORPUS=1")
+    if os.environ.get("TINGZHE_ALLOW_SMALL_CORPUS") != "1":
         sys.exit(1)
-    print("     （已由 MOSS_ALLOW_SMALL_CORPUS=1 显式接受）")
+    print("     （已由 TINGZHE_ALLOW_SMALL_CORPUS=1 显式接受）")
 # 判据（2026-07-26 Q8甲 装了词边界护栏后改口径）:
 # 「规则嵌在更长真词里」**本身不再等于误伤** —— 护栏会拒绝那次替换。
 # ⛔ 所以别在这里用 Python 判边界(那是重写一遍运行时逻辑,必分叉,第 4 项就栽过)——
 #    **拿每一处实际上下文去问真实引擎**「你到底会不会改它」。命中只十几处,逐处一次调用足够快。
 import subprocess
-BIN = os.environ.get("MOSS_ENGINE") or ""
+BIN = os.environ.get("TINGZHE_ENGINE") or ""
 if not BIN:
-    print("  ❌ 没有可用引擎（MOSS_ENGINE 为空）—— 先跑 ./build.sh --dev")
+    print("  ❌ 没有可用引擎（TINGZHE_ENGINE 为空）—— 先跑 ./build.sh --dev")
     sys.exit(1)
 
 # ⛔⛔ 2026-07-26 · 两个独立独立复核各自抓出同一个致命缺陷,已实测复现后重写：
@@ -680,7 +680,7 @@ fi
 if [ -f negatives.txt ]; then
   python3 - <<'EOF'
 import subprocess, sys, os
-BIN = os.environ["MOSS_ENGINE"]     # 同上：拷问刚编出来的那个，不是 app 里的旧的
+BIN = os.environ["TINGZHE_ENGINE"]     # 同上：拷问刚编出来的那个，不是 app 里的旧的
 lines = [l.rstrip("\n") for l in open("negatives.txt", encoding="utf-8")]
 cases = [l for l in lines if l.strip() and not l.lstrip().startswith("#")]
 bad = []
@@ -713,7 +713,7 @@ if [ -n "$ENGINE" ]; then
   # 更糟的是 `try? orig.write` 吞错误且 exit 路径不跑 defer:窗口内被 Ctrl-C 会把
   # `自检临时错例→自检临时正例` **永久留在生产词表里**。
   # → 整项挪进沙箱。实测:生产 dict.json 的 mtime 与 md5 **前后都不变**,而自检照常通过。
-  RL=$(MOSS_CONNECT_DIR="$SANDBOX" MOSS_LOG_DIR="$SANDBOX/logs" "$ENGINE" --selftest-reload 2>&1)
+  RL=$(TINGZHE_DIR="$SANDBOX" TINGZHE_LOG_DIR="$SANDBOX/logs" "$ENGINE" --selftest-reload 2>&1)
   if grep -q "✓ selftest-reload" <<<"$RL"; then
     pass "改 dict.json 无需重启（$(grep -o '指纹 [^,]*' <<<"$RL")）"
   else
@@ -727,7 +727,7 @@ echo "[11/12] 方案丙浮层（不抢焦点 · 否决只写候选不写词表�
 # **我自己按不了那个键**,而「我验不了的东西 = 我以为会好的地方」——本 repo 三次踩过的坑的同一形状。
 # ⚠ 浮层要起窗口 ⇒ 走沙箱项目目录与沙箱日志目录,不碰生产的任何东西。
 if [ -n "$ENGINE" ]; then
-  HUDOUT=$(MOSS_SELFTEST_HUD=1 MOSS_CONNECT_DIR="$SANDBOX" MOSS_LOG_DIR="$SANDBOX/logs" \
+  HUDOUT=$(TINGZHE_SELFTEST_HUD=1 TINGZHE_DIR="$SANDBOX" TINGZHE_LOG_DIR="$SANDBOX/logs" \
            "$ENGINE" --selftest-hud 2>&1 || true)
   if grep -q "✓ selftest-hud" <<<"$HUDOUT"; then
     pass "浮层不抢焦点 · 否决只落候选队列（dict.json / negatives.txt 未被碰）"
@@ -745,8 +745,8 @@ echo "[12/12] 语音对话模式开关（作者 2026-07-28：按一下开、再�
 if [ -n "$ENGINE" ]; then
   # ⛔ 2026-07-28 踩过的坑:原来这里靠 HOME="$SANDBOX" 隔离,而 macOS 的
   # homeDirectoryForCurrentUser **不认 HOME**(走 getpwuid)→ 自检删掉了 作者 生产的语音状态位,
-  # 把 作者 卡在「麦开着、界面说关着、点开关也关不掉」。必须走专用的 MOSS_STATE_DIR。
-  VOUT=$(MOSS_STATE_DIR="$SANDBOX" MOSS_CONNECT_DIR="$SANDBOX" MOSS_LOG_DIR="$SANDBOX/logs" \
+  # 把 作者 卡在「麦开着、界面说关着、点开关也关不掉」。必须走专用的 TINGZHE_STATE_DIR。
+  VOUT=$(TINGZHE_STATE_DIR="$SANDBOX" TINGZHE_DIR="$SANDBOX" TINGZHE_LOG_DIR="$SANDBOX/logs" \
          "$ENGINE" --selftest-voice 2>&1 || true)
   if grep -q "✓ selftest-voice" <<<"$VOUT"; then
     pass "语音模式开关：状态落文件 · 来回切换正确 · 未与既有手势冲突"
@@ -770,7 +770,7 @@ fi
 
 # ⛔ 流式朗读(MOSS-TTS-v1.5-Flash)。三个参数少一个就退回非流式,而症状是"怎么还是慢"、不报错;
 # 采样率/声道写错不报错,只会让你听见花栗鼠。都钉在闸里。
-SPK=$(MOSS_STATE_DIR="$SANDBOX" MOSS_LOG_DIR="$SANDBOX/logs" $ENGINE --selftest-speak 2>&1 || true)
+SPK=$(TINGZHE_STATE_DIR="$SANDBOX" TINGZHE_LOG_DIR="$SANDBOX/logs" $ENGINE --selftest-speak 2>&1 || true)
 if grep -q "^✓ selftest-speak" <<<"$SPK"; then
   pass "$(grep '^✓ selftest-speak' <<<"$SPK" | sed 's/^✓ selftest-speak: //')"
   grep "⚠ 未断言" <<<"$SPK" | sed 's/^/     /'
@@ -795,8 +795,8 @@ else
   fail "重授判据还在比 CDHash —— 那会让每次构建都误报「授权掉了」"
   printf '%s\n' "${CDLEFT}" | sed 's/^/     /'
 fi
-if [ -f .last-designated ] && [ -d moss-ptt.app ]; then
-  NOWSIG=$(codesign -d --requirements - moss-ptt.app 2>&1 | grep '^designated' | head -1 || true)
+if [ -f .last-designated ] && [ -d tingzhe.app ]; then
+  NOWSIG=$(codesign -d --requirements - tingzhe.app 2>&1 | grep '^designated' | head -1 || true)
   if [ "$(cat .last-designated)" = "${NOWSIG}" ]; then
     pass "重授基线跟当前 app 的 designated 一致（不会凭空要求重授）"
   else
@@ -862,9 +862,9 @@ echo
 # ⛔ C10/C3:失败时也必须打结论行(原来第 2/3/4 项 `|| exit 1` 会让脚本静默终止);
 # 且带了逃生口时不许说"全绿" —— 那正是「一句 warn 没有东西依赖它」的形状。
 ESCAPES=""
-[ "${MOSS_ACCEPT_NO_AX:-0}" = "1" ] && ESCAPES="$ESCAPES MOSS_ACCEPT_NO_AX"
-[ "${MOSS_ALLOW_SMALL_CORPUS:-0}" = "1" ] && ESCAPES="$ESCAPES MOSS_ALLOW_SMALL_CORPUS"
-[ "${MOSS_ALLOW_NO_CORPUS:-0}" = "1" ] && ESCAPES="$ESCAPES MOSS_ALLOW_NO_CORPUS"
+[ "${TINGZHE_ACCEPT_NO_AX:-0}" = "1" ] && ESCAPES="$ESCAPES TINGZHE_ACCEPT_NO_AX"
+[ "${TINGZHE_ALLOW_SMALL_CORPUS:-0}" = "1" ] && ESCAPES="$ESCAPES TINGZHE_ALLOW_SMALL_CORPUS"
+[ "${TINGZHE_ALLOW_NO_CORPUS:-0}" = "1" ] && ESCAPES="$ESCAPES TINGZHE_ALLOW_NO_CORPUS"
 if [ $FAIL -eq 0 ]; then
   if [ -n "$ESCAPES" ]; then
     # ⛔ F-4(独立复核实测):原来这里 `exit 0` —— 而 .githooks/pre-push 只看退出码,

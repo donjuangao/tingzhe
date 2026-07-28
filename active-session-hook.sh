@@ -6,7 +6,7 @@
 #                并且能关掉那些我不想继续语音对话的 session」
 # ⇒ 「最后说话的那个」是**猜**,作者 要的是**他自己指定**。所以这里只记名单。
 set -uo pipefail
-STATE="${MOSS_VOICE_STATE:-$HOME/Library/Caches/moss-ptt}"
+STATE="${TINGZHE_VOICE_STATE:-$HOME/Library/Caches/tingzhe}"
 mkdir -p "$STATE/sessions"
 IN=$(cat)
 python3 - "$STATE" <<'PY' <<<"$IN" 2>/dev/null || true
@@ -37,9 +37,9 @@ for n in fs[8:]:
 # ⛔ 确保「边写边念」的监听器在跑 —— 它盯 transcript,每落一段就念一段。
 # 为什么放这里:这个钩子在**你发消息时**触发,那正是"接下来会有输出"的时刻,
 # 而且此刻才知道是哪个 session。
-STATE="${MOSS_VOICE_STATE:-$HOME/Library/Caches/moss-ptt}"
+STATE="${TINGZHE_VOICE_STATE:-$HOME/Library/Caches/tingzhe}"
 if [ -f "$STATE/voice-on" ]; then
   pgrep -f "speak-watch.py" >/dev/null 2>&1 || \
-    ( "${MOSS_CONNECT_DIR:-$HOME/Downloads/moss-connect}/speak-watch.py" >/dev/null 2>&1 & )
+    ( "${TINGZHE_DIR:-$HOME/Downloads/tingzhe}/speak-watch.py" >/dev/null 2>&1 & )
 fi
 exit 0

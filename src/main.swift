@@ -1,11 +1,11 @@
-// moss-ptt · 按住热键说话 → moss 转写 → 专名修正 → 粘贴到当前焦点框
+// tingzhe · 按住热键说话 → moss 转写 → 专名修正 → 粘贴到当前焦点框
 // 最小可用版(作者 2026-07-25 拍 Q3甲)。零第三方依赖,只用系统框架。
 //
 // 热键: 默认右 ⌥ 单键按住(config.json 可改) —— 按住录音,松开转写
 // ⛔ 别设 rightCommand:右⌘ 是 ⌘C/⌘V/⌘Tab 修饰键,⌘Tab 切窗口会误录并粘出去
-// 配置: ~/Downloads/moss-connect/.env.local 的 MOSS_API_KEY
-//       ~/Downloads/moss-connect/dict.json  专名修正词表
-// 覆盖目录: 环境变量 MOSS_CONNECT_DIR
+// 配置: ~/Downloads/tingzhe/.env.local 的 TINGZHE_API_KEY
+//       ~/Downloads/tingzhe/dict.json  专名修正词表
+// 覆盖目录: 环境变量 TINGZHE_DIR
 
 import Foundation
 import AVFoundation
@@ -21,12 +21,12 @@ let kSampleRate = 16000.0
 // ⛔ 2026-07-28 作者 拍开源范围:「不要那么大 scope,让他们去写自己的 API」。
 // MOSS 的接口本来就是 **OpenAI 那个形状**,所以只要把**地址和模型名**放进 config.json,
 // 任何 OpenAI 兼容的服务都能直接填进来用 —— **这不是抽象层,就是两个字符串**。
-/// ⛔ 这一句原来把路径写死成 `~/Downloads/moss-connect/config.json`,**不认 `MOSS_CONNECT_DIR`** ——
+/// ⛔ 这一句原来把路径写死成 `~/Downloads/tingzhe/config.json`,**不认 `TINGZHE_DIR`** ——
 /// 别人把仓库克隆到任何别的地方,`api_base` 就永远读不到,只能用默认那个服务商。
 /// 而"换服务商"正是开源版唯一要求用的人自己做的事(作者 拍:「让他们去写自己的 API」)。
 /// ⚠ 不能用底下的 `projectDir`:它定义在后面,而这是顶层 `let`,求值更早。所以把同一段逻辑写在这。
 let kConfigDir: String = {
-    if let d = ProcessInfo.processInfo.environment["MOSS_CONNECT_DIR"], !d.isEmpty { return d }
+    if let d = ProcessInfo.processInfo.environment["TINGZHE_DIR"], !d.isEmpty { return d }
     // ⚠ 跟 projectDir 同一条推断,但不能调它(那是后面的全局,求值更晚)。
     var u = URL(fileURLWithPath: CommandLine.arguments.first ?? "").resolvingSymlinksInPath()
     for _ in 0..<5 {
@@ -36,7 +36,7 @@ let kConfigDir: String = {
         }
     }
     return FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Downloads/moss-connect").path
+        .appendingPathComponent("Downloads/tingzhe").path
 }()
 let kAPIBase: String = {
     for n in ["config.json", "config.example.json"] {      // 没有自己的就用仓库带的那份
@@ -54,7 +54,7 @@ let kModel = "moss-transcribe"
 /// (两处独立的 `r.currentTime` 读取),于是**踩过的坑 #1 只要重新犯在生产那一处,该项照旧绿** ——
 /// 而它正是专为踩过的坑 #1 加的那一项。它在空项目目录里都能过 = 连 Controller 都没构造。
 /// 现在给主路径开一个可驱动入口:transcribe 返回占位、deliver 只记日志,其余**全走真代码**。
-let kSelftest = ProcessInfo.processInfo.environment["MOSS_SELFTEST_MAINPATH"] == "1"
+let kSelftest = ProcessInfo.processInfo.environment["TINGZHE_SELFTEST_MAINPATH"] == "1"
 
 let kRetries = 2          // 实测空响应率 ≈6%,不重试约每 17 次按住会有一次哑火
 
@@ -77,11 +77,11 @@ let isOneShot = CommandLine.arguments.dropFirst().contains { $0.hasPrefix("--") 
 /// `homeDirectoryForCurrentUser` 无效(macOS 走 getpwuid,不看环境变量)。
 /// 测隐私功能却只能拿真数据测,本身就是个设计缺陷。
 let logDirURL: URL = {
-    if let p = ProcessInfo.processInfo.environment["MOSS_LOG_DIR"] {
+    if let p = ProcessInfo.processInfo.environment["TINGZHE_LOG_DIR"] {
         return URL(fileURLWithPath: p)
     }
     return FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Logs/moss-ptt")
+        .appendingPathComponent("Library/Logs/tingzhe")
 }()
 
 let appLogURL: URL = {
@@ -90,7 +90,7 @@ let appLogURL: URL = {
 }()
 
 func log(_ s: String) {
-    let line = "[moss-ptt] \(s)\n"
+    let line = "[tingzhe] \(s)\n"
     FileHandle.standardError.write(line.data(using: .utf8)!)
     guard !isOneShot else { return }          // 见 isOneShot 的注释：别污染常驻日志
     let stamped = "\(ISO8601DateFormatter().string(from: Date())) \(line)"
@@ -108,7 +108,7 @@ func log(_ s: String) {
 /// ⚠ 项目文档里写着「闸自己不许有副作用,现在这句是真的了」——
 ///   那句只覆盖了**文件**(dict.json 的 mtime、日志),没覆盖**声音**。
 ///   **又一条比听起来窄的保证。** 副作用不只是写盘,凡是用户能察觉的都算。
-let kQuiet: Bool = ProcessInfo.processInfo.environment["MOSS_QUIET"] == "1"
+let kQuiet: Bool = ProcessInfo.processInfo.environment["TINGZHE_QUIET"] == "1"
     || CommandLine.arguments.contains(where: { $0.hasPrefix("--selftest") })
 
 /// ⚠ 计数只在**真的播了**之后加 —— 闸靠它断言"整轮跑下来一声没响"。
@@ -122,13 +122,13 @@ func beep(_ name: String) {
 }
 
 /// ⛔⛔ 2026-07-28 开源前审计(视角③「文档承诺 vs 仓库现实」)抓出的**必死项**:
-/// 这里原来硬编码 `~/Downloads/moss-connect` —— 那是**作者本机的位置**。
+/// 这里原来硬编码 `~/Downloads/tingzhe` —— 那是**作者本机的位置**。
 /// 别人把仓库 clone 到任何别的地方,把 key 放进自己那份 `.env.local`,
-/// 程序仍然去 `~/Downloads/moss-connect/.env.local` 找,然后报「找不到 MOSS_API_KEY」,
+/// 程序仍然去 `~/Downloads/tingzhe/.env.local` 找,然后报「找不到 TINGZHE_API_KEY」,
 /// 而报出来的路径**跟他被告知去 clone 的地方毫无关系**。**每一个新用户 100% 撞这堵墙。**
 /// ⇒ 正确解法:从**可执行文件自己的位置**推。app bundle 里是
-///    `<repo>/moss-ptt.app/Contents/MacOS/moss-ptt`(上溯 4 层),
-///    裸二进制是 `<repo>/build/dev/moss-ptt`(上溯 3 层)。
+///    `<repo>/tingzhe.app/Contents/MacOS/tingzhe`(上溯 4 层),
+///    裸二进制是 `<repo>/build/dev/tingzhe`(上溯 3 层)。
 ///    认不出来才退回旧默认值(作者本机仍然能用)。
 /// ⚠ 顺序:环境变量 > 自身位置 > 旧默认值。
 func resolveProjectDir(_ exePath: String, env: String?) -> URL {
@@ -145,12 +145,12 @@ func resolveProjectDir(_ exePath: String, env: String?) -> URL {
         if hasSrc || hasBuild { return cand }
     }
     return FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Downloads/moss-connect")
+        .appendingPathComponent("Downloads/tingzhe")
 }
 
 let projectDir: URL = resolveProjectDir(
     CommandLine.arguments.first ?? "",
-    env: ProcessInfo.processInfo.environment["MOSS_CONNECT_DIR"])
+    env: ProcessInfo.processInfo.environment["TINGZHE_DIR"])
 
 
 /// 方案丙浮层开关。⛔ CLI 一次性命令(含各种自检)一律不起窗口 —— 闸不许有可见副作用。
@@ -158,7 +158,7 @@ let projectDir: URL = resolveProjectDir(
 /// 初始化的,不是惰性的。我第一版把它写在第 30 行(两个依赖都在它后面),编译器一声不吭,
 /// 运行时 `--apply` 直接 **SIGSEGV(139)**。⚠ 而我第一次验它时把管道里 `tail` 的退出码
 /// 当成了程序的退出码,于是看到 rc=0 —— **和这个 repo 记了三次的 pipefail 坑是同一个动作**。
-let kHUD = ProcessInfo.processInfo.environment["MOSS_SELFTEST_HUD"] == "1"
+let kHUD = ProcessInfo.processInfo.environment["TINGZHE_SELFTEST_HUD"] == "1"
     || (!isOneShot && loadHUDEnabled())
 let kHUDSeconds = loadHUDSeconds()
 let kHUDPosition = loadHUDPosition()
@@ -167,8 +167,8 @@ func loadAPIKey() -> String? {
     let f = projectDir.appendingPathComponent(".env.local")
     guard let text = try? String(contentsOf: f, encoding: .utf8) else { return nil }
     for line in text.split(separator: "\n") {
-        if line.hasPrefix("MOSS_API_KEY=") {
-            let v = line.dropFirst("MOSS_API_KEY=".count)
+        if line.hasPrefix("TINGZHE_API_KEY=") {
+            let v = line.dropFirst("TINGZHE_API_KEY=".count)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return v.isEmpty ? nil : v
         }
@@ -419,7 +419,7 @@ var mainPathClipboardOK = false
 func transcribe(_ fileURL: URL, key: String) -> String? {
     if kSelftest {                       // 自检:不出网,回一句含真实错例的占位
         log("SELFTEST: transcribe 被调用（未出网）")
-        return "星规那边的状态记录同步一下啊，乙项目的资料库先不动，甲项目等我拍板儿再说。"
+        return "甲项目的资料库先不要动，乙项目那边等确认之后再说。"
     }
     guard let audio = try? Data(contentsOf: fileURL) else { log("读音频失败"); return nil }
     for attempt in 1...(kRetries + 1) {
@@ -919,12 +919,12 @@ final class VoiceLoop {
         guard !running else { return }
         // ⛔⛔ 2026-07-28:闸默认**不许开真麦**。
         // `--selftest-voice` 会 setOn(true) → 开麦;而 deliver 的自检短路只认
-        // MOSS_SELFTEST_MAINPATH,这个自检没设它 ⇒ 那几秒里你要是正好在说话,
+        // TINGZHE_SELFTEST_MAINPATH,这个自检没设它 ⇒ 那几秒里你要是正好在说话,
         // 转写会一路走到 **⌘V + 回车,粘进你当时的窗口**。
         // 闸能把字打进用户的聊天框,这不是副作用,是事故。
-        // 要验真设备行为:MOSS_ALLOW_MIC=1（显式认账）。
-        if kQuiet && ProcessInfo.processInfo.environment["MOSS_ALLOW_MIC"] != "1" {
-            log("（自检态：不打开真麦克风。要验真设备请 MOSS_ALLOW_MIC=1）")
+        // 要验真设备行为:TINGZHE_ALLOW_MIC=1（显式认账）。
+        if kQuiet && ProcessInfo.processInfo.environment["TINGZHE_ALLOW_MIC"] != "1" {
+            log("（自检态：不打开真麦克风。要验真设备请 TINGZHE_ALLOW_MIC=1）")
             return
         }
         let input = engine.inputNode
@@ -1093,7 +1093,7 @@ enum Composer {
     ///   而 instant 的全部意义就是**不等**。所以它走的是攒之前那条老路 —— 那条路一个字没改,
     ///   顺序投递的闸(乱序完成仍按原顺序)照旧守着它。
     static var isInstant: Bool {
-        if let s = ProcessInfo.processInfo.environment["MOSS_SEND_MODE"], !s.isEmpty {
+        if let s = ProcessInfo.processInfo.environment["TINGZHE_SEND_MODE"], !s.isEmpty {
             return s == "instant"
         }
         return ((hudConfig()["voice_send_mode"] as? String) ?? "batch") == "instant"
@@ -1101,7 +1101,7 @@ enum Composer {
 
     /// env 覆盖只给自检用 —— 让闸走**同一条**攒/拼/发的路,只是不用真等 3.2 秒。
     static var windowSec: TimeInterval {
-        if let s = ProcessInfo.processInfo.environment["MOSS_SEND_AFTER_MS"], let v = Double(s) {
+        if let s = ProcessInfo.processInfo.environment["TINGZHE_SEND_AFTER_MS"], let v = Double(s) {
             return v / 1000
         }
         return ((hudConfig()["voice_send_after_ms"] as? Double) ?? 3200) / 1000
@@ -1242,7 +1242,7 @@ enum TTS {
     }
 
     /// 打断信号 —— 你一开口,常驻碰一下这个文件,正在念的那个进程看见就闭嘴。
-    /// ⛔ 不能再用 `pkill -x moss-ptt`:**常驻自己也叫这个名字**,一 pkill 连它一起杀。
+    /// ⛔ 不能再用 `pkill -x tingzhe`:**常驻自己也叫这个名字**,一 pkill 连它一起杀。
     ///   (旧路是 pkill afplay,那时候念的是 afplay 所以没事;播放挪进来之后这条就变致命了。)
     static var shutUpFlag: URL {
         VoiceMode.flagURL.deletingLastPathComponent().appendingPathComponent("shutup")
@@ -1257,10 +1257,10 @@ enum TTS {
     }
 
     /// ⛔⛔ 差点漏掉的致命处:`Speaker.isPlaying` 原来查 `pgrep -x afplay`,
-    /// 而念声音的进程现在叫 `moss-ptt --speak` ⇒ isPlaying 恒 false ⇒ **shutUp 永远不被调用**
+    /// 而念声音的进程现在叫 `tingzhe --speak` ⇒ isPlaying 恒 false ⇒ **shutUp 永远不被调用**
     /// ⇒ **打断整个失效,而且不报任何错**。换播放方式时必须同时换"谁在播"的判据 ——
     /// 这两件事看起来是两处,其实是一处。
-    /// ⚠ 不用 pgrep 认进程名:常驻自己也叫 moss-ptt。用 PID 文件 + `kill -0` 验活,
+    /// ⚠ 不用 pgrep 认进程名:常驻自己也叫 tingzhe。用 PID 文件 + `kill -0` 验活,
     ///   崩溃留下的陈旧 PID 会被验活挡掉,不会让 isPlaying 恒真。
     static var speakingFlag: URL {
         VoiceMode.flagURL.deletingLastPathComponent().appendingPathComponent("speaking.pid")
@@ -1435,7 +1435,7 @@ final class StreamSpeaker: NSObject, URLSessionDataDelegate {
 /// 钩子那边用 afplay 播放,这里负责知道它在不在播、以及一句话把它掐掉。
 enum Speaker {
     static var isPlaying: Bool {
-        // ⛔ 流式朗读在 moss-ptt --speak 里放,不是 afplay —— 只查 afplay 会让打断静默失效
+        // ⛔ 流式朗读在 tingzhe --speak 里放,不是 afplay —— 只查 afplay 会让打断静默失效
         if TTS.isSpeaking { return true }
         let t = Process(); t.launchPath = "/usr/bin/pgrep"
         t.arguments = ["-x", "afplay"]
@@ -1445,7 +1445,7 @@ enum Speaker {
         return t.terminationStatus == 0
     }
     static func shutUp() {
-        // ⛔ 流式朗读在**自己的进程**里放,不能 pkill —— 那个进程也叫 moss-ptt,
+        // ⛔ 流式朗读在**自己的进程**里放,不能 pkill —— 那个进程也叫 tingzhe,
         //   连常驻一起杀。改成碰一下标志文件,它自己看见就闭嘴(TTS.shutUpFlag)。
         TTS.signalShutUp()
         for p in ["afplay", "say"] {          // 兜底:非流式那条路仍走 afplay
@@ -1475,7 +1475,7 @@ final class Controller {
 
     private init() {
         guard let k = loadAPIKey() else {
-            log("✗ 找不到 MOSS_API_KEY(查 \(projectDir.path)/.env.local)")
+            log("✗ 找不到 TINGZHE_API_KEY(查 \(projectDir.path)/.env.local)")
             exit(1)
         }
         key = k
@@ -1520,7 +1520,7 @@ final class Controller {
         guard !busy, recorder == nil else { return }
         reloadTablesIfChanged()
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("moss-ptt-\(UUID().uuidString).m4a")
+            .appendingPathComponent("tingzhe-\(UUID().uuidString).m4a")
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: kSampleRate,
@@ -1758,7 +1758,7 @@ var flagsMonitor: Any?
 
 // MARK: - 语音对话模式（作者 2026-07-28：「按一个键就打开，一直打开，再按一个键就关上」）
 //
-// ⛔ 状态的唯一真相 = `~/Library/Caches/moss-ptt/voice-on` 这个文件 ——
+// ⛔ 状态的唯一真相 = `~/Library/Caches/tingzhe/voice-on` 这个文件 ——
 // 因为**读它的是另一个进程**（`speak-hook.sh`，Claude 每轮说完时被 Claude Code 拉起来）。
 // 进程内的布尔变量它看不见，所以状态必须落在两边都能看到的地方。
 enum VoiceMode {
@@ -1768,11 +1768,11 @@ enum VoiceMode {
         // 早就写着这条,我还是踩了)。后果:闸删掉了 作者 **生产**的状态位,
         // 界面显示"关"、常驻那边的麦却没收到停的指令 → **作者 被卡在麦一直开着且关不掉的状态**。
         // → 状态位必须有独立的覆盖口,自检走它。
-        if let d = ProcessInfo.processInfo.environment["MOSS_STATE_DIR"], !d.isEmpty {
+        if let d = ProcessInfo.processInfo.environment["TINGZHE_STATE_DIR"], !d.isEmpty {
             return URL(fileURLWithPath: d).appendingPathComponent("voice-on")
         }
         return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/moss-ptt/voice-on")
+            .appendingPathComponent("Library/Caches/tingzhe/voice-on")
     }
     static var isOn: Bool { FileManager.default.fileExists(atPath: flagURL.path) }
 
@@ -1920,7 +1920,7 @@ final class StatusBar: NSObject, NSMenuDelegate {
     }
 
     /// ⛔ 2026-07-28 实测:常驻由 launchd **直接 exec 裸二进制**(不走 LaunchServices),
-    /// 该进程**拿不到菜单栏** —— `System Events` 查得逐字:moss-ptt 的 menu bars = **1**,
+    /// 该进程**拿不到菜单栏** —— `System Events` 查得逐字:tingzhe 的 menu bars = **1**,
     /// 而有状态项的 app(微信)是 **2**。而它自己的 `isVisible` **返回 true** ——
     /// **那个属性在这种情况下是撒谎的**,我上一轮据此打了个假绿灯。
     /// ⚠ 改走 `open -a` 启动能拿到菜单栏,但会破坏 TCC 的 responsible process 归属
@@ -2802,7 +2802,7 @@ func installHotKey() {
             installSingleModifier(n, k, f)
         } else {
             log("⚠ 单键热键 \(n) 需要辅助功能权限,当前没有 → 回落到 ⌃⌥Space")
-            log("  授权后重启即可用单键: 系统设置 → 隐私与安全性 → 辅助功能 → 加入 moss-ptt.app")
+            log("  授权后重启即可用单键: 系统设置 → 隐私与安全性 → 辅助功能 → 加入 tingzhe.app")
             installCarbon("⌃⌥Space", UInt32(kVK_Space), UInt32(controlKey | optionKey))
         }
     }
@@ -2998,13 +2998,13 @@ if let i = CommandLine.arguments.firstIndex(of: "--fix") {
     // `--fix 推 min 推 main`(忘加引号)会静默丢掉后两个参数,插入 `推 → min`,
     // 于是此后**每个「推」都变 min**;而 --fix 写完立即热重载,闸是事后才跑的。
     if CommandLine.arguments.count > i + 3 {
-        print("✗ 参数太多。含空格的词必须加引号：moss-ptt --fix \"推 min\" \"推 main\"")
+        print("✗ 参数太多。含空格的词必须加引号：tingzhe --fix \"推 min\" \"推 main\"")
         print("  你给的是：\(CommandLine.arguments[(i+1)...].map { "\"\($0)\"" }.joined(separator: " "))")
         exit(2)
     }
     guard i + 2 < CommandLine.arguments.count else {
-        print("用法: moss-ptt --fix <模型听错的> <正确的>")
-        print("例:   moss-ptt --fix 星盾 星轨")
+        print("用法: tingzhe --fix <模型听错的> <正确的>")
+        print("例:   tingzhe --fix 星盾 星轨")
         exit(2)
     }
     exit(addFix(CommandLine.arguments[i + 1], CommandLine.arguments[i + 2]) ? 0 : 1)
@@ -3018,7 +3018,7 @@ if CommandLine.arguments.contains("--candidates") {
 /// ⭐ 存在的理由不只是手动试:check.sh 的词表回归**原本在 Python 里重写了一遍 applyDict**,
 /// 那是个静默分叉源(Python 版对拼音层一无所知)。改由闸调用本命令 → 闸测的是真实代码路径。
 if let i = CommandLine.arguments.firstIndex(of: "--apply") {
-    guard i + 1 < CommandLine.arguments.count else { print("用法: moss-ptt --apply \"<文本>\""); exit(2) }
+    guard i + 1 < CommandLine.arguments.count else { print("用法: tingzhe --apply \"<文本>\""); exit(2) }
     let r = correct(CommandLine.arguments[i + 1], loadDict(), loadCanon(), loadProtected())
     print(r.text)
     exit(0)
@@ -3060,7 +3060,7 @@ if CommandLine.arguments.contains("--selftest-record") {
 
 if let i = CommandLine.arguments.firstIndex(of: "--selftest-transcribe"),
    i + 1 < CommandLine.arguments.count {
-    // 端到端:真调 API + 过词表。会消耗积分,故只在 MOSS_CHECK_E2E=1 时由闸调用。
+    // 端到端:真调 API + 过词表。会消耗积分,故只在 TINGZHE_CHECK_E2E=1 时由闸调用。
     let f = URL(fileURLWithPath: CommandLine.arguments[i + 1])
     guard let key = loadAPIKey() else { log("✗ 无 API key"); exit(1) }
     guard let raw = transcribe(f, key: key) else { log("✗ 转写失败"); exit(1) }
@@ -3110,7 +3110,7 @@ if CommandLine.arguments.contains("--selftest-mainpath") {
     // ⛔ 这一项才是踩过的坑 #1 的真正断言:它驱动**生产那份** startRecording/stopAndTranscribe,
     // 不是副本。若有人再把 `r.currentTime` 挪到 `stop()` 之后,这里必红。
     guard kSelftest else {
-        print("✗ 需要 MOSS_SELFTEST_MAINPATH=1（防止误调真 API / 误粘到焦点框）"); exit(2)
+        print("✗ 需要 TINGZHE_SELFTEST_MAINPATH=1（防止误调真 API / 误粘到焦点框）"); exit(2)
     }
     let c = Controller.shared
     c.startRecording()
@@ -3160,20 +3160,20 @@ if CommandLine.arguments.contains("--selftest-voice") {
     // ⛔⛔ 2026-07-28 踩过的坑的第一道防线:自检**绝不许碰生产状态位**。
     // 上一版靠 HOME="$SANDBOX" 隔离,而 homeDirectoryForCurrentUser 不认 HOME →
     // 自检删掉了 作者 生产的 voice-on,把他卡在「麦开着、界面说关着、关不掉」。
-    // 现在:没显式给 MOSS_STATE_DIR 就**直接拒跑**,而不是"默默去动真的那个"。
-    guard let sd = ProcessInfo.processInfo.environment["MOSS_STATE_DIR"], !sd.isEmpty else {
-        print("✗ 拒绝运行:没给 MOSS_STATE_DIR。本自检会真的建/删语音状态位,")
+    // 现在:没显式给 TINGZHE_STATE_DIR 就**直接拒跑**,而不是"默默去动真的那个"。
+    guard let sd = ProcessInfo.processInfo.environment["TINGZHE_STATE_DIR"], !sd.isEmpty else {
+        print("✗ 拒绝运行:没给 TINGZHE_STATE_DIR。本自检会真的建/删语音状态位,")
         print("   不隔离就会动到生产的那个 —— 2026-07-28 正是这样把 作者 卡在「麦关不掉」。")
         exit(2)
     }
     let prodFlag = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Caches/moss-ptt/voice-on")
+        .appendingPathComponent("Library/Caches/tingzhe/voice-on")
     let prodBefore = FileManager.default.fileExists(atPath: prodFlag.path)
     // ⚠ 静音位同规:要查的是「**我**有没有动它」,不是「它存不存在」。
     //   第一版写成了后者 —— 作者 合法地点一次静音,闸就红了(2026-07-28 当场踩到)。
     //   旁边 prodBefore/prodAfter 本来就是对的形状,我却在隔壁两行写错了同一件事。
     let prodMuted = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Caches/moss-ptt/voice-muted")
+        .appendingPathComponent("Library/Caches/tingzhe/voice-muted")
     let prodMutedBefore = FileManager.default.fileExists(atPath: prodMuted.path)
 
     let f = VoiceMode.flagURL
@@ -3457,7 +3457,7 @@ if CommandLine.arguments.contains("--selftest-voice") {
         let c = Controller.shared
         var got: [String] = []
         deliverProbe = { got.append($0) }
-        setenv("MOSS_SEND_MODE", "instant", 1)
+        setenv("TINGZHE_SEND_MODE", "instant", 1)
         VoiceMode.setOn(true); VoiceLoop.shared.stop(); Composer.discard()
         c.resetSeqForSelftest()
         c.probeDeliverInOrder(0, "第一句。")
@@ -3468,7 +3468,7 @@ if CommandLine.arguments.contains("--selftest-voice") {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
         deliverProbe = nil; VoiceMode.setOn(false)
-        unsetenv("MOSS_SEND_MODE")
+        unsetenv("TINGZHE_SEND_MODE")
         check(got == ["第一句。", "第二句。", "第三句。"],
               "一句一条模式：三段发**三条**、且按原顺序（实得 \(got.count) 条 \(got.joined(separator: "|"))）")
         check(!Composer.isInstant, "env 撤掉后回到默认的攒成一条（两种模式不会互相粘住）")
@@ -3498,10 +3498,10 @@ if CommandLine.arguments.contains("--selftest-voice") {
     // ⛔ 原来这条读的是 `isRunning`,而那要求闸真去开一次麦(见 start() 头注的事故路径)。
     //   ⇒ 默认验**判断本身**(纯函数,不碰设备);真设备行为留给显式开关。
     check(!VoiceLoop.wantsRunning(), "静音时按状态就不该开着麦（判断层）")
-    if ProcessInfo.processInfo.environment["MOSS_ALLOW_MIC"] == "1" {
-        check(!VoiceLoop.shared.isRunning, "静音时麦**真的停了**（真设备 · MOSS_ALLOW_MIC=1）")
+    if ProcessInfo.processInfo.environment["TINGZHE_ALLOW_MIC"] == "1" {
+        check(!VoiceLoop.shared.isRunning, "静音时麦**真的停了**（真设备 · TINGZHE_ALLOW_MIC=1）")
     } else {
-        print("     ⚪ 真设备那半没测（要 MOSS_ALLOW_MIC=1）—— 默认不开麦，见 start() 头注")
+        print("     ⚪ 真设备那半没测（要 TINGZHE_ALLOW_MIC=1）—— 默认不开麦，见 start() 头注")
     }
     check(VoiceMode.isOn, "静音 ≠ 关掉语音模式（单方面：我还念给你听）")
     VoiceMode.setMuted(false)
@@ -3566,7 +3566,7 @@ if CommandLine.arguments.contains("--selftest-voice") {
                    "voice_gate_mult", "voice_onset_ms", "voice_send_after_ms"]
     check(cfgKeys.count == 7, "VAD 门槛均可由 config.json 覆盖（\(cfgKeys.joined(separator: " / "))）")
     // ⛔ 发送窗口必须**明显长于**分段窗口 —— 两者相等就等于没拆开这两个边界,病会原样回来。
-    check(Composer.windowSec > 1.4 || ProcessInfo.processInfo.environment["MOSS_SEND_AFTER_MS"] != nil,
+    check(Composer.windowSec > 1.4 || ProcessInfo.processInfo.environment["TINGZHE_SEND_AFTER_MS"] != nil,
           "发送窗口 \(Composer.windowSec)s > 分段窗口 1.4s（相等 = 又变回按停顿切消息）")
 
     // ⛔⛔ 2026-07-28 作者:「你在改另一个东西，为什么弄得我的插件一直嘚嘚嘚地响？」
@@ -3574,7 +3574,7 @@ if CommandLine.arguments.contains("--selftest-voice") {
     // 这三条盯的就是它们，因为每一条都是"跑闸的人听得见/看得见"的:
     check(beepsPlayed == 0,
           "整段自检**一声都没响过**（实测响了 \(beepsPlayed) 声；这一段本身会开关语音模式 6 次、静音 4 次）")
-    check(!VoiceLoop.shared.isRunning || ProcessInfo.processInfo.environment["MOSS_ALLOW_MIC"] == "1",
+    check(!VoiceLoop.shared.isRunning || ProcessInfo.processInfo.environment["TINGZHE_ALLOW_MIC"] == "1",
           "自检没有打开真麦克风（那条路能把转写结果 ⌘V 进你当时的窗口）")
 
     // ⛔ 收尾必查:整段跑完,**生产状态位一个字节都不该动过**
@@ -3587,7 +3587,7 @@ if CommandLine.arguments.contains("--selftest-voice") {
     //   前后对比只是纵深防御,而常驻活着时它跟"有人正在用"天生冲突 → 那种情况下只报信息。
     let pg = Process()
     pg.launchPath = "/usr/bin/pgrep"
-    pg.arguments = ["-f", "moss-ptt.app/Contents/MacOS"]
+    pg.arguments = ["-f", "tingzhe.app/Contents/MacOS"]
     pg.standardOutput = Pipe(); pg.standardError = Pipe()
     try? pg.run(); pg.waitUntilExit()
     let daemonAlive = (pg.terminationStatus == 0)
@@ -3611,7 +3611,7 @@ if CommandLine.arguments.contains("--selftest-voice") {
 
 // ⭐ 流式朗读入口。文本从 **stdin** 进,不走 argv ——
 // argv 会出现在 `ps` 输出里,而念的正文就是我回你的话(含代码/路径/业务内容)。
-// 用法: echo "要念的话" | moss-ptt --speak
+// 用法: echo "要念的话" | tingzhe --speak
 if CommandLine.arguments.contains("--speak") {
     let raw = String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
     let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3631,15 +3631,15 @@ if CommandLine.arguments.contains("--selftest-speak") {
     // 没沙箱时它删的是**生产**的 speaking.pid —— 我第一次跑真机打断测试,
     // 就在念到一半时用这个自检把"正在念"的标志抹掉了。
     // 判据不是"我小心点跑",是**没给沙箱就拒跑**(07-28 voice-on 那条踩过的坑的同一形状,第二次)。
-    guard let sd = ProcessInfo.processInfo.environment["MOSS_STATE_DIR"], !sd.isEmpty else {
-        print("✗ 拒绝运行:没给 MOSS_STATE_DIR。本自检会建/删「正在念」「闭嘴」两个状态位,")
+    guard let sd = ProcessInfo.processInfo.environment["TINGZHE_STATE_DIR"], !sd.isEmpty else {
+        print("✗ 拒绝运行:没给 TINGZHE_STATE_DIR。本自检会建/删「正在念」「闭嘴」两个状态位,")
         print("   不隔离就会掐掉 作者 正在听的那段话。")
         exit(2)
     }
     check(TTS.speakingFlag.path.hasPrefix(sd) && TTS.shutUpFlag.path.hasPrefix(sd),
           "两个状态位都落在沙箱里")
     let prodSpeaking = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Caches/moss-ptt/speaking.pid")
+        .appendingPathComponent("Library/Caches/tingzhe/speaking.pid")
     let prodBefore = FileManager.default.fileExists(atPath: prodSpeaking.path)
     // ⛔ 这三个参数少一个,流式就退回非流式(或直接 400)——而症状是"怎么还是慢",不报错。
     let b = TTS.requestBody("测试")
@@ -3892,12 +3892,12 @@ if CommandLine.arguments.contains("--selftest-canon") {
 // TMPDIR 不同 → 两边各拿各的锁文件、互相看不见，锁在「常驻 + 手动混跑」这个最需要它的
 // 场景下正好失效。2026-07-25 由 check.sh 第 6 项当场抓出。改用固定路径。
 let lockDir = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent("Library/Caches/moss-ptt")
+    .appendingPathComponent("Library/Caches/tingzhe")
 try? FileManager.default.createDirectory(at: lockDir, withIntermediateDirectories: true)
 let lockPath = lockDir.appendingPathComponent("instance.lock").path
 let lockFD = open(lockPath, O_CREAT | O_RDWR, 0o600)
 if lockFD < 0 || flock(lockFD, LOCK_EX | LOCK_NB) != 0 {
-    log("✗ 已有一个 moss-ptt 在跑(锁 \(lockPath))。先退掉那个再启动,别同时跑两份。")
+    log("✗ 已有一个 tingzhe 在跑(锁 \(lockPath))。先退掉那个再启动,别同时跑两份。")
     exit(1)
 }
 
@@ -3917,7 +3917,7 @@ DispatchQueue.main.async {
 Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in VoiceLoop.shared.reconcile() }
 
 // ⛔ 没权限时**主动向系统申请**，而不是叫用户自己去列表里拖文件。
-// 2026-07-25 踩过的坑：让 作者 手动添加 moss-ptt.app 试了两轮都不生效，且无从诊断
+// 2026-07-25 踩过的坑：让 作者 手动添加 tingzhe.app 试了两轮都不生效，且无从诊断
 // （TCC.db 受 SIP 保护读不了，条目对不对、开关开没开、哈希匹不匹配全是黑盒）。
 // AXIsProcessTrustedWithOptions 带 prompt 会弹系统对话框，并由**系统自己**把当前
 // 进程加进辅助功能列表 —— 系统加的条目必然匹配，绕开所有"加错了"的可能。
@@ -3925,12 +3925,12 @@ if !AXIsProcessTrusted() {
     let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
     let granted = AXIsProcessTrustedWithOptions(opts)
     log("已向系统申请辅助功能权限（弹窗可能在其它桌面/被窗口挡住）。当前 trusted=\(granted)")
-    log("  在弹窗里点「打开系统设置」→ 勾上 moss-ptt → 然后重跑 ./install-agent.sh install")
+    log("  在弹窗里点「打开系统设置」→ 勾上 tingzhe → 然后重跑 ./install-agent.sh install")
 }
 
 log("就绪。说话时按住热键,松开出字。Ctrl-C 退出。")
 if !AXIsProcessTrusted() {
     log("⚠ 未授辅助功能权限 → 转写结果只放剪贴板(需自己 ⌘V)。")
-    log("  想要自动粘贴 + 单键热键: 系统设置 → 隐私与安全性 → 辅助功能 → 加入 moss-ptt.app")
+    log("  想要自动粘贴 + 单键热键: 系统设置 → 隐私与安全性 → 辅助功能 → 加入 tingzhe.app")
 }
 app.run()

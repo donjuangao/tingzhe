@@ -1,12 +1,12 @@
 #!/bin/bash
-# 构建 moss-ptt.app —— 零依赖,只用 Xcode CLT 自带的 swiftc
+# 构建 tingzhe.app —— 零依赖,只用 Xcode CLT 自带的 swiftc
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# ⛔ --dev:编译到**另一个路径**,绝不碰 moss-ptt.app（2026-07-26 作者 抓）
+# ⛔ --dev:编译到**另一个路径**,绝不碰 tingzhe.app（2026-07-26 作者 抓）
 #
 # 病根:本脚本原来只有一个输出路径,于是"我要编译"被我当成了"我要覆盖 作者 正在用的那个 bundle"。
-# **它们不是一件事。** 辅助功能授权绑 moss-ptt.app 的 CDHash —— 只要不覆盖它,授权就不会掉。
+# **它们不是一件事。** 辅助功能授权绑 tingzhe.app 的 CDHash —— 只要不覆盖它,授权就不会掉。
 # 而绝大多数自检(`--apply` / `--fix` / `--candidates` / `--selftest-canon` / `--selftest-boundary`
 # / `--selftest-reload`)是**纯文本操作,零权限需求**,拿裸二进制跑就够。
 # 只有 `--selftest-record`(要麦克风)与守护进程冒烟(要辅助功能)必须用真 app。
@@ -31,9 +31,9 @@ for a in "$@"; do
     --dev) DEV=1 ;;
     -h|--help)
       echo "用法: ./build.sh [--dev]"
-      echo "  --dev  编译到 build/dev/moss-ptt —— 不打 bundle、不签名、**不碰 moss-ptt.app**"
-      echo "         (辅助功能授权绑 moss-ptt.app 的 CDHash;迭代期一律用这条)"
-      echo "   无参   正式构建 moss-ptt.app —— ⛔ 会打掉辅助功能授权,需 作者 重授一次"
+      echo "  --dev  编译到 build/dev/tingzhe —— 不打 bundle、不签名、**不碰 tingzhe.app**"
+      echo "         (辅助功能授权绑 tingzhe.app 的 CDHash;迭代期一律用这条)"
+      echo "   无参   正式构建 tingzhe.app —— ⛔ 会打掉辅助功能授权,需 作者 重授一次"
       exit 0 ;;
     *) echo "✗ 不认识的参数: ${a}（想看用法: ./build.sh --help）" >&2; exit 2 ;;
   esac
@@ -45,7 +45,7 @@ done
 # 那一刻才跑一次正式构建」这条铁律,然后自己违反了它 —— 一条只写在注释里的规矩,
 # 跟"警告没有东西依赖它"是同一个病。
 # ⚠ 这段话原来写的是「每一次正式构建都会作废 作者 的辅助功能授权(ad-hoc 签名绑 CDHash,无法避免)」
-#   —— **2026-07-28 已被推翻**:本机自签身份 `moss-ptt-local` 的 designated 认「identifier+证书」,
+#   —— **2026-07-28 已被推翻**:本机自签身份 `tingzhe-local` 的 designated 认「identifier+证书」,
 #   跟二进制无关,授权跨构建存活(实测 CDHash 变而授权不掉)。留着那句话 = 仓库里两份真相,
 #   下一个 session 读到它又会去让 作者 重授一次。
 # 闸仍然保留,但理由换了、也说实话:正式构建会**覆盖 作者 正在用的那个 bundle** 并重启常驻,
@@ -59,16 +59,16 @@ done
 #   第一版只查 `launchctl list` 有没有这个 label,于是在一个全新的临时 clone 里也判「有」
 #   (作者机器上确实注册着,但它指向的是**另一个目录**)。
 DISTURBS=0
-[ -d "moss-ptt.app" ] && DISTURBS=1
-PLIST="$HOME/Library/LaunchAgents/local.mossconnect.ptt.plist"
+[ -d "tingzhe.app" ] && DISTURBS=1
+PLIST="$HOME/Library/LaunchAgents/local.tingzhe.ptt.plist"
 if [ -f "${PLIST}" ] && grep -q "$(pwd)/" "${PLIST}" 2>/dev/null; then DISTURBS=1; fi
-if [ "$DEV" != "1" ] && [ "$DISTURBS" = "1" ] && [ "${MOSS_REAL_BUILD:-0}" != "1" ]; then
-  echo "⚠ 正式构建会覆盖 作者 正在用的 moss-ptt.app 并重启常驻（期间热键短暂失灵）。"
+if [ "$DEV" != "1" ] && [ "$DISTURBS" = "1" ] && [ "${TINGZHE_REAL_BUILD:-0}" != "1" ]; then
+  echo "⚠ 正式构建会覆盖 作者 正在用的 tingzhe.app 并重启常驻（期间热键短暂失灵）。"
   echo "  授权**不会**掉：已用本机自签身份签名，designated 认证书不认二进制（2026-07-28 实测）。"
   echo
-  echo "   迭代请用：./build.sh --dev      （完全不碰 moss-ptt.app）"
+  echo "   迭代请用：./build.sh --dev      （完全不碰 tingzhe.app）"
   echo "   确实要正式构建："
-  echo "     MOSS_REAL_BUILD=1 ./build.sh"
+  echo "     TINGZHE_REAL_BUILD=1 ./build.sh"
   echo
   echo "   ⚠ 跑它之前先确认现在没人在用。"
   exit 3
@@ -78,7 +78,7 @@ fi
 # 产出"二进制来自 A、签名来自 B"或直接死在 codesign。加锁。
 # ⛔ 别用 flock —— **macOS 没有它**(util-linux 专属)。2026-07-26 实测:`command not found`
 # 让 `if ! flock` 成真 → 报「已有一个构建在跑」→ **正式构建整条路被堵死**。
-# 而这把锁从没被执行过一次(正式构建刚被关到 MOSS_REAL_BUILD=1 后面),
+# 而这把锁从没被执行过一次(正式构建刚被关到 TINGZHE_REAL_BUILD=1 后面),
 # 又是「加了机制却没跑过它」—— 本项目当天第四次。
 # 改用 POSIX 到处都有的 mkdir 原子锁 + 死锁接管。
 LOCKD=".build.lock.d"
@@ -99,10 +99,10 @@ if [ "$DEV" = "1" ]; then
   mkdir -p build/dev
   swiftc -swift-version 5 -O \
     -framework AVFoundation -framework AppKit -framework Carbon \
-    -o build/dev/moss-ptt src/main.swift
-  echo "✓ dev 构建完成 → $(pwd)/build/dev/moss-ptt"
-  echo "  （未打 bundle · 未签名 · 未碰 moss-ptt.app → 辅助功能授权不受影响）"
-  echo "  纯文本自检可直接跑，例：build/dev/moss-ptt --selftest-boundary"
+    -o build/dev/tingzhe src/main.swift
+  echo "✓ dev 构建完成 → $(pwd)/build/dev/tingzhe"
+  echo "  （未打 bundle · 未签名 · 未碰 tingzhe.app → 辅助功能授权不受影响）"
+  echo "  纯文本自检可直接跑，例：build/dev/tingzhe --selftest-boundary"
   exit 0
 fi
 
@@ -110,8 +110,8 @@ fi
 # 二进制删干净且不可回滚,而 LaunchAgent 的 KeepAlive 正指着那个空路径
 # (= 2026-07-22 那 28,062 次无限重拉的同型现场)。
 # 改为:构到临时 bundle → 成功了才原子换上。编译失败时现有 app 一根手指都不碰。
-APP="moss-ptt.app"
-STAGE=".build-stage/moss-ptt.app"
+APP="tingzhe.app"
+STAGE=".build-stage/tingzhe.app"
 rm -rf ".build-stage" && mkdir -p "$STAGE/Contents/MacOS"
 # ⚠ 别在这里再 `trap ... EXIT` —— 会**覆盖掉**上面那把锁的 trap,锁就永远不释放了。
 # 上面的 trap 已同时清 $LOCKD 与 .build-stage;DEV 分支根本走不到这里。
@@ -121,9 +121,9 @@ cat > "$STAGE/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleExecutable</key><string>moss-ptt</string>
-  <key>CFBundleIdentifier</key><string>local.mossconnect.ptt</string>
-  <key>CFBundleName</key><string>moss-ptt</string>
+  <key>CFBundleExecutable</key><string>tingzhe</string>
+  <key>CFBundleIdentifier</key><string>local.tingzhe.ptt</string>
+  <key>CFBundleName</key><string>tingzhe</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
@@ -135,7 +135,7 @@ PLIST
 
 swiftc -swift-version 5 -O \
   -framework AVFoundation -framework AppKit -framework Carbon \
-  -o "$STAGE/Contents/MacOS/moss-ptt" src/main.swift
+  -o "$STAGE/Contents/MacOS/tingzhe" src/main.swift
 
 # ⛔ 2026-07-26 更正:原注释写「TCC 用签名标识记住授权,不签的话每次重建都要重授」——**这句是错的**。
 # 实测:`codesign --sign -` 是 **ad-hoc** 签名(`Signature=adhoc` · `TeamIdentifier=not set`),
@@ -147,22 +147,22 @@ swiftc -swift-version 5 -O \
 # ⛔⛔ 2026-07-28:改用**本机自签身份**,不再用 ad-hoc。
 # ad-hoc(`--sign -`)的指定要求就是 cdhash 本身 ⇒ 改一个字节授权就失效,
 # 作者 今天为此重授了**八次**。自签身份的指定要求是
-#   `identifier "local.mossconnect.ptt" and certificate leaf = H"..."`
+#   `identifier "local.tingzhe.ptt" and certificate leaf = H"..."`
 # —— 认的是「这个 app + 这张证书」,**跟二进制内容无关**。
 # 实证:两个完全不同的二进制签出来的 designated 字符串**逐字相同**。
 # ⚠ 证书没有"受信任"状态(那要改安全设置,不该由脚本代劳),但**签名不需要它**。
 # 身份不在时自动退回 ad-hoc,不阻断构建。
-SIGN_ID="moss-ptt-local"
+SIGN_ID="tingzhe-local"
 if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
-  if codesign --force --sign "$SIGN_ID" --identifier local.mossconnect.ptt --timestamp=none "$STAGE" 2>/dev/null; then
+  if codesign --force --sign "$SIGN_ID" --identifier local.tingzhe.ptt --timestamp=none "$STAGE" 2>/dev/null; then
     echo "  ✓ 用本机自签身份签名 → 授权跨构建存活（不再需要每次重授）"
   else
     echo "  ⚠ 自签身份签名失败 → 退回 ad-hoc（这次仍会掉授权）"
-    codesign --force --sign - --identifier local.mossconnect.ptt "$STAGE" 2>/dev/null || true
+    codesign --force --sign - --identifier local.tingzhe.ptt "$STAGE" 2>/dev/null || true
   fi
 else
   echo "  ⚠ 没有 $SIGN_ID 身份 → ad-hoc 签名（每次构建都会掉授权）"
-  codesign --force --sign - --identifier local.mossconnect.ptt "$STAGE" 2>/dev/null \
+  codesign --force --sign - --identifier local.tingzhe.ptt "$STAGE" 2>/dev/null \
     || echo "  ⚠ 签名失败"
 fi
 
@@ -199,9 +199,9 @@ rm -rf ".build-old"
 #   (「别写成 $BIN | grep -q —— 本脚本开了 pipefail」),而这里同样的写法没人看见。
 # 教训:管道结果先落变量再判,别在 `if` 里直接接 `| grep -q`。
 LL=$(launchctl list 2>/dev/null || true)
-if grep -q local.mossconnect.ptt <<<"$LL"; then
+if grep -q local.tingzhe.ptt <<<"$LL"; then
   echo "检测到 LaunchAgent 已装 → 重启它以载入新二进制"
-  OLDPID=$(pgrep -f "$PWD/moss-ptt.app/Contents/MacOS" | head -1 || true)
+  OLDPID=$(pgrep -f "$PWD/tingzhe.app/Contents/MacOS" | head -1 || true)
   # ⛔ 重启**之前**打时间戳 —— 底下的就绪判定要用它把「旧日志」和「新实例写的」分开。
   MARKTS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   # ⛔⛔ 这里原来有个 `|| { launchctl unload …; launchctl load …; }` 兜底 —— 已删。
@@ -210,9 +210,9 @@ if grep -q local.mossconnect.ptt <<<"$LL"; then
   # 把它放在 `|| ` 后面 = 平时看不见,kickstart 一旦失败就**自动执行禁区命令**,
   # 而那一刻没人在看。2026-07-27 作者 就是这样同一天第三次被赶去系统设置。
   # ⇒ 宁可重启失败并如实报出来(底下的 NEWPID 判定会判红),也不许自己"修好"。
-  if ! launchctl kickstart -k "gui/$(id -u)/local.mossconnect.ptt" 2>/dev/null; then
+  if ! launchctl kickstart -k "gui/$(id -u)/local.tingzhe.ptt" 2>/dev/null; then
     echo "  ⚠ kickstart 失败 —— **不**自动 unload/load(那会打掉你的辅助功能授权)。"
-    echo "    要重启请自己跑: launchctl kickstart -k \"gui/\$(id -u)/local.mossconnect.ptt\""
+    echo "    要重启请自己跑: launchctl kickstart -k \"gui/\$(id -u)/local.tingzhe.ptt\""
   fi
   # ⛔ 等的必须是「**新**进程起来了」,不是「有进程在跑」——
   # 原来的 `pgrep >/dev/null && break` 在旧进程还活着时第一轮就 break,
@@ -220,7 +220,7 @@ if grep -q local.mossconnect.ptt <<<"$LL"; then
   NEWPID="$OLDPID"
   for _ in $(seq 1 24); do
     sleep 0.5
-    NEWPID=$(pgrep -f "$PWD/moss-ptt.app/Contents/MacOS" | head -1 || true)
+    NEWPID=$(pgrep -f "$PWD/tingzhe.app/Contents/MacOS" | head -1 || true)
     [ -n "$NEWPID" ] && [ "$NEWPID" != "$OLDPID" ] && break
   done
   if [ -n "$NEWPID" ] && [ "$NEWPID" != "$OLDPID" ]; then
@@ -237,7 +237,7 @@ if grep -q local.mossconnect.ptt <<<"$LL"; then
     # 且明写「未授辅助功能权限」的旧日志,0.666 秒就拿到 `✓ 常驻实例已换新进程并写出就绪`。
     # check.sh 第 6 项为同一件事做了 SEGTS > MTS 比对,这里没有 —— 同一个判据两处实现不一致,
     # 而弱的那处正好在「重启是否成功」这个最需要它的位置上。
-    AXLOG="${MOSS_LOG_DIR:-$HOME/Library/Logs/moss-ptt}/app.log"
+    AXLOG="${TINGZHE_LOG_DIR:-$HOME/Library/Logs/tingzhe}/app.log"
     READY=0
     for _ in $(seq 1 24); do
       if [ -s "$AXLOG" ]; then
@@ -294,12 +294,12 @@ if [ "$REGRANT" = "1" ]; then
   echo "  只有换签名身份/退回 ad-hoc/没签成才会走到这里。普通改代码重建**不会**掉授权。
   现在的实际状态：热键退化为三键 ⌃⌥Space · 自动粘贴退化为只进剪贴板"
   echo "  恢复（只有你本人能做，TCC 不接受程序代授）："
-  echo "    1. 系统设置 → 隐私与安全性 → 辅助功能 → 移除旧的 moss-ptt"
+  echo "    1. 系统设置 → 隐私与安全性 → 辅助功能 → 移除旧的 tingzhe"
   echo "    2. 重新加 $(pwd)/$APP"
   echo "    3. ./install-agent.sh install"
   echo "  ⚠ 在此之前 ./check.sh 第 6 项会判**红** —— 这是故意的：不让「工具在退化状态」变成隐形。"
-  echo "     真要接受退化状态：MOSS_ACCEPT_NO_AX=1 ./check.sh"
+  echo "     真要接受退化状态：TINGZHE_ACCEPT_NO_AX=1 ./check.sh"
 fi
 echo
 echo "启动（前台跑，能看日志，Ctrl-C 退出）:"
-echo "  ./$APP/Contents/MacOS/moss-ptt"
+echo "  ./$APP/Contents/MacOS/tingzhe"

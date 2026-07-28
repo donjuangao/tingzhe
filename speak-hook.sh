@@ -11,15 +11,15 @@
 # ⛔ 钩子不许拖住对话：整段跑在后台，超时硬杀。钩子自己永远立刻返回 0。
 set -uo pipefail
 
-DIR="${MOSS_CONNECT_DIR:-$HOME/Downloads/moss-connect}"
-STATE="${MOSS_VOICE_STATE:-$HOME/Library/Caches/moss-ptt}"
-LOG="${MOSS_LOG_DIR:-$HOME/Library/Logs/moss-ptt}/speak.log"
+DIR="${TINGZHE_DIR:-$HOME/Downloads/tingzhe}"
+STATE="${TINGZHE_VOICE_STATE:-$HOME/Library/Caches/tingzhe}"
+LOG="${TINGZHE_LOG_DIR:-$HOME/Library/Logs/tingzhe}/speak.log"
 mkdir -p "$STATE" "$(dirname "$LOG")"
 
 IN=$(cat)
 
 # ⛔ 语音模式是**能开能关的模式**，不是全天候（§6c-3）。没开就什么都不做。
-# 开：touch ~/Library/Caches/moss-ptt/voice-on   关：rm 它
+# 开：touch ~/Library/Caches/tingzhe/voice-on   关：rm 它
 [ -f "$STATE/voice-on" ] || exit 0
 
 # ── 取回复正文。⚠ last_assistant_message 是官方文档字段，但本机此前无人用过 ──
@@ -117,7 +117,7 @@ fi
   # 地址/模型走 config —— 别人换成自己的 OpenAI 兼容服务即可
   API_BASE=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("api_base","https://api.mosi.cn/v1"))' "$DIR/config.json" 2>/dev/null || echo "https://api.mosi.cn/v1")
   TTS_MODEL=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("tts_model","moss-tts"))' "$DIR/config.json" 2>/dev/null || echo moss-tts)
-  KEY=$(grep '^MOSS_API_KEY=' "$DIR/.env.local" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"'')
+  KEY=$(grep '^TINGZHE_API_KEY=' "$DIR/.env.local" 2>/dev/null | cut -d= -f2- | tr -d '"'"'"'')
   OUT="$STATE/reply-${MY_SID:-x}.mp3"   # ⛔ 每 session 一个：共用一个会互相覆盖、杀不干净
 
   if [ -n "$KEY" ]; then

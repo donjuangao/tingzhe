@@ -19,9 +19,9 @@ import sys
 import time
 from pathlib import Path
 
-DIR = Path(os.environ.get("MOSS_CONNECT_DIR") or Path.home() / "Downloads/moss-connect")
-STATE = Path(os.environ.get("MOSS_VOICE_STATE") or Path.home() / "Library/Caches/moss-ptt")
-LOGD = Path(os.environ.get("MOSS_LOG_DIR") or Path.home() / "Library/Logs/moss-ptt")
+DIR = Path(os.environ.get("TINGZHE_DIR") or Path.home() / "Downloads/tingzhe")
+STATE = Path(os.environ.get("TINGZHE_VOICE_STATE") or Path.home() / "Library/Caches/tingzhe")
+LOGD = Path(os.environ.get("TINGZHE_LOG_DIR") or Path.home() / "Library/Logs/tingzhe")
 LOG = LOGD / "speak.log"
 
 # ⛔ 一句一送，不是整段一送 —— 首字延迟从「整段合成完」变成「第一句合成完」。
@@ -79,7 +79,7 @@ def cfg(k, d):
 def key():
     try:
         for line in (DIR / ".env.local").read_text().splitlines():
-            if line.startswith("MOSS_API_KEY="):
+            if line.startswith("TINGZHE_API_KEY="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     except Exception:
         pass
@@ -87,8 +87,8 @@ def key():
 
 
 ENGINE_CANDIDATES = [
-    DIR / "moss-ptt.app/Contents/MacOS/moss-ptt",
-    DIR / "build/dev/moss-ptt",
+    DIR / "tingzhe.app/Contents/MacOS/tingzhe",
+    DIR / "build/dev/tingzhe",
 ]
 
 
@@ -118,7 +118,7 @@ def speak_stream(text):
     """
     e = engine()
     if e is None:
-        log("✗ 找不到 moss-ptt 可执行文件 → 这段没念（跑一次 ./build.sh 或 ./build.sh --dev）")
+        log("✗ 找不到 tingzhe 可执行文件 → 这段没念（跑一次 ./build.sh 或 ./build.sh --dev）")
         return False
     try:
         r = subprocess.run([str(e), "--speak"], input=text, text=True,
@@ -207,7 +207,7 @@ def _selftest():
 
     voice_on = lambda: True                      # noqa: E731
     check(engine() is not None,
-          "找得到 moss-ptt 可执行文件（念声音靠它，找不到就整条哑了）")
+          "找得到 tingzhe 可执行文件（念声音靠它，找不到就整条哑了）")
 
     # ⛔ 正文必须走 stdin —— argv 会出现在 ps 输出里,而念的就是回复本体(含代码/路径/业务)。
     src = pathlib.Path(__file__).read_text()

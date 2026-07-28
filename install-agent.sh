@@ -4,17 +4,17 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-LABEL="local.mossconnect.ptt"
+LABEL="local.tingzhe.ptt"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-BIN="$PWD/moss-ptt.app/Contents/MacOS/moss-ptt"
+BIN="$PWD/tingzhe.app/Contents/MacOS/tingzhe"
 # ⛔ 日志必须写 ~/Library/Logs —— 2026-07-22 踩过的坑：launchd 自己在 exec 之前打开
 # StandardOut/ErrorPath，而它对 ~/Downloads 无权限 → 配置阶段退 78、程序压根没启动、
 # stderr 恒空、KeepAlive 累计重拉 28,062 次。（这条是在另一个项目上先踩到的）
 # ⛔ F15(2026-07-26 独立复核实测):二进制不存在时本脚本照样报「已装」,并把
-# `-  78  local.mossconnect.ptt`(自己注释里点名的死亡签名:配置阶段退 78 + KeepAlive 无限重拉)
+# `-  78  local.tingzhe.ptt`(自己注释里点名的死亡签名:配置阶段退 78 + KeepAlive 无限重拉)
 # 当状态原样展示却从不解析。「构建失败 → install-agent install」这条最自然的补救序列,
 # 产出的是一个对着空路径无限重拉的 job,而报告是「已装」。故先查存在性。
-LOGDIR="$HOME/Library/Logs/moss-ptt"
+LOGDIR="$HOME/Library/Logs/tingzhe"
 
 case "${1:-}" in
 install)
@@ -22,8 +22,8 @@ install)
     if [ ! -x "$BIN" ]; then
       echo "✗ 找不到可执行的 $BIN"
       # ⛔ C-6(独立复核抓):这里原来写 `./build.sh` —— 而正式构建 2026-07-26 起需要
-      # MOSS_REAL_BUILD=1,裸跑会退 3。**一条教人跑必然失败的命令的提示,比没有提示更坏。**
-      echo "  先跑：MOSS_REAL_BUILD=1 ./build.sh"
+      # TINGZHE_REAL_BUILD=1,裸跑会退 3。**一条教人跑必然失败的命令的提示,比没有提示更坏。**
+      echo "  先跑：TINGZHE_REAL_BUILD=1 ./build.sh"
       echo "  （⛔ 会打掉辅助功能授权，需你重授一次；只想编译自检用 ./build.sh --dev）"
       exit 1
     fi
@@ -34,8 +34,8 @@ mkdir -p "$HOME/Library/LaunchAgents"   # F16:新账号上默认不存在,不建
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>$LABEL</string>
-  <!-- 2026-07-25 实测定论：TCC 授权条目是**二进制** Contents/MacOS/moss-ptt
-       （系统弹窗自动加的那条，图标为通用可执行文件、名称 moss-ptt）。
+  <!-- 2026-07-25 实测定论：TCC 授权条目是**二进制** Contents/MacOS/tingzhe
+       （系统弹窗自动加的那条，图标为通用可执行文件、名称 tingzhe）。
        一度改走 open -W -a 想让 TCC 认 app 身份（⛔ 此注释在 heredoc 内，不可用反引号：会被 shell 当命令执行），反而使 responsible process
        变成 /usr/bin/open、对不上已授权的条目 → 权限永远拿不到。故改回直接指向二进制。 -->
   <key>ProgramArguments</key><array><string>$BIN</string></array>
@@ -44,7 +44,7 @@ mkdir -p "$HOME/Library/LaunchAgents"   # F16:新账号上默认不存在,不建
   <key>StandardOutPath</key><string>$LOGDIR/out.log</string>
   <key>StandardErrorPath</key><string>$LOGDIR/err.log</string>
   <key>EnvironmentVariables</key><dict>
-    <key>MOSS_CONNECT_DIR</key><string>$PWD</string>
+    <key>TINGZHE_DIR</key><string>$PWD</string>
   </dict>
 </dict></plist>
 PLISTEOF
@@ -58,7 +58,7 @@ PLISTEOF
   # ⇒ **job 已经装着就只 kickstart(保住授权),没装才 load。**
   if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
     echo "  job 已注册 → 只重启它（⛔ 不 unload/load：那会打掉辅助功能授权）"
-    pkill -f "moss-ptt.app/Contents/MacOS" 2>/dev/null || true
+    pkill -f "tingzhe.app/Contents/MacOS" 2>/dev/null || true
     sleep 1
     launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null || true
     sleep 2
@@ -71,7 +71,7 @@ PLISTEOF
   # 不受 launchd 管，会活下来；重新 load 时 open 发现它还在就直接返回，进程根本没换。
   # 后果：改了权限/配置后重装 agent 看似成功，实际跑的还是老进程（2026-07-25 踩到，
   # 作者 已勾上辅助功能开关，却因进程没换而一直显示无权限）。
-  pkill -f "moss-ptt.app/Contents/MacOS" 2>/dev/null || true
+  pkill -f "tingzhe.app/Contents/MacOS" 2>/dev/null || true
   sleep 1
   launchctl load "$PLIST"
   sleep 2
@@ -81,7 +81,7 @@ PLISTEOF
   ;;
 uninstall)
   launchctl unload "$PLIST" 2>/dev/null || true
-  pkill -f "moss-ptt.app/Contents/MacOS" 2>/dev/null || true
+  pkill -f "tingzhe.app/Contents/MacOS" 2>/dev/null || true
   rm -f "$PLIST"
   echo "已卸。日志目录 $LOGDIR 保留，要清自己删。"
   ;;

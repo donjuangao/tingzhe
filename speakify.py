@@ -62,7 +62,7 @@ import os as _os
 def _cap():
     try:
         import json as _j
-        d = _os.environ.get("MOSS_CONNECT_DIR") or _os.path.expanduser("~/Downloads/moss-connect")
+        d = _os.environ.get("TINGZHE_DIR") or _os.path.expanduser("~/Downloads/tingzhe")
         v = _j.load(open(_os.path.join(d, "config.json"))).get("speak_max_chars")
         if isinstance(v, (int, float)) and v > 50: return int(v)
     except Exception: pass
@@ -163,8 +163,8 @@ CASES = [
     ("改的是 `src/main.swift:378` 那一行", ["main.swift", "378", "/"], ["文件"]),
     ("```bash\nrm -rf /\n```\n说完了", ["rm", "bash"], ["说完了"]),
     ("| 列一 | 列二 |\n|---|---|\n正文在这", ["列一", "|"], ["正文在这"]),
-    ("跑 `MOSS_REAL_BUILD=1 ./build.sh && ./install-agent.sh install` 就行",
-     ["MOSS_REAL_BUILD", "&&"], ["一条命令"]),
+    ("跑 `TINGZHE_REAL_BUILD=1 ./build.sh && ./install-agent.sh install` 就行",
+     ["TINGZHE_REAL_BUILD", "&&"], ["一条命令"]),
     ("⛔ 别这么写 → 会炸", ["⛔", "→"], ["注意", "就是"]),
     ("[面板](https://example.com/x)", ["https", "example"], ["面板"]),
 ]

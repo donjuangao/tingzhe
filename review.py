@@ -21,8 +21,8 @@ import sys
 import difflib
 
 REPO = os.path.dirname(os.path.abspath(__file__))
-LOG = os.environ.get("MOSS_REVIEW_LOG",
-                     os.path.expanduser("~/Library/Logs/moss-ptt/transcripts.jsonl"))
+LOG = os.environ.get("TINGZHE_REVIEW_LOG",
+                     os.path.expanduser("~/Library/Logs/tingzhe/transcripts.jsonl"))
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "review.html")
 
 
@@ -140,7 +140,7 @@ def render(rows):
 PAGE = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>moss-ptt · 哪个词错了</title>
+<title>tingzhe · 哪个词错了</title>
 <style>
   :root{--void:#14110d;--ink:#1d1810;--card:#241d14;--raised:#322819;--paper:#e8ddc8;
         --paper-hi:#f6efe0;--mute:#b3a589;--faint:#7d735f;--amber:#d9a441;--green:#7fae6a;--red:#c9705c}
@@ -260,7 +260,7 @@ function reset() {
   upd();
 }
 function upd() {
-  var L = ['# moss-ptt 词表回执 —— 只含词与条目号，不含句子'], n = 0;
+  var L = ['# tingzhe 词表回执 —— 只含词与条目号，不含句子'], n = 0;
   for (var id in A) {
     var a = A[id], d = D[id]; if (!a || !a.v) continue;
     n++;
@@ -355,7 +355,7 @@ def main():
     print(f"生成 {OUT}")
     print(f"  {len(items)} 条转写 · 其中词表动过手的 {chg} 条")
     print("  ⛔ 这是本地文件，正文不出这台机器（不上传、不进对话）")
-    if os.environ.get("MOSS_REVIEW_NO_OPEN") != "1":
+    if os.environ.get("TINGZHE_REVIEW_NO_OPEN") != "1":
         subprocess.run(["open", OUT])
         print("  已在浏览器打开 —— 点完点「复制」，把那一小段贴回聊天")
 

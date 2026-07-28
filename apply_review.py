@@ -22,12 +22,12 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.abspath(__file__))
-LOG = os.environ.get("MOSS_REVIEW_LOG",
-                     os.path.expanduser("~/Library/Logs/moss-ptt/transcripts.jsonl"))
+LOG = os.environ.get("TINGZHE_REVIEW_LOG",
+                     os.path.expanduser("~/Library/Logs/tingzhe/transcripts.jsonl"))
 NEG = os.path.join(REPO, "negatives.txt")
 PROT = os.path.join(REPO, "protect.json")
-BIN = os.path.join(REPO, "moss-ptt.app/Contents/MacOS/moss-ptt")
-DEV = os.path.join(REPO, "build/dev/moss-ptt")
+BIN = os.path.join(REPO, "tingzhe.app/Contents/MacOS/tingzhe")
+DEV = os.path.join(REPO, "build/dev/tingzhe")
 
 
 def rows():
