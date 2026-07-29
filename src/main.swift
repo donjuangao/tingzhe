@@ -219,6 +219,12 @@ func appendJSONL(dur: TimeInterval, ms: Int, raw: String, fixed: String, fixes: 
         "raw": raw,            // 模型原始输出 —— 向量化迭代的关键字段
         "fixed": fixed,        // 词表修正后
         "fixes": fixes,
+        // ⛔⛔ 2026-07-29 作者:「也许这个词表我们需要**按照 session 来分**的 —— 我跟不同的 session
+        // 说的东西是不一样的。」而在这一行之前,这个文件里**每一条都不知道是说给谁的**:
+        // 309 条真实语料全是无主的,按 session 分的方案连**回溯评测**都跑不起来。
+        // ⚠ 荒唐的是程序一直**知道**是谁(`voice-partner` 就是徽章里选的那条线),只是落盘没带上。
+        // ⇒ 空字符串 = 当时没选 partner(按住说话的一次性转写),不是"丢了"。
+        "session": StatusBar.partner ?? "",
         // 分层记账 —— 哪一层修的,决定了下一步该加字面规则还是加 canon 词。
         // 只记总数的话,"拼音层到底有没有用"这个问题日后无法从日志回答。
         "fix_dict": fixDict,
@@ -1303,6 +1309,15 @@ enum TTS {
         return kill(pid, 0) == 0        // 进程还活着才算在念(挡掉崩溃留下的陈旧 PID)
     }
 
+    /// 播放增益。⛔ 2026-07-29 作者:「你说话的声音有一点小。」
+    /// 先量过再动手:MOSS 回来的 PCM **峰值 0.675 · RMS 0.080**(正常语音素材 0.7-0.95 / 0.05-0.15)
+    /// —— **源音频不小,所以问题在播放侧**。头号嫌疑是我们自己开的回声消除:
+    /// `setVoiceProcessingEnabled(true)` 是给通话设计的,它会**压低输出**防回授,
+    /// 而常开麦语音对话恰恰全程开着它。⚠ 这条是**推断,没实证**(量不到系统输出电平)。
+    /// ⇒ 不赌病因,先给一个能立刻生效的旋钮;`AVAudioPlayerNode.volume` 上限是 1.0,
+    ///   要**超过原音量只能在样本上乘**,所以做在这里。
+    static var gain: Float { Float((hudConfig()["tts_gain"] as? Double) ?? 1.0) }
+
     /// 交错 int16 → AVAudioPCMBuffer(float32 非交错)。
     /// ⛔ 纯函数,闸直接验 —— 声道解交错错一位,左右声道就会互相灌,听感是"糊在一起"。
     static func buffer(from data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {
@@ -1313,11 +1328,15 @@ enum TTS {
               let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
               let dst = buf.floatChannelData else { return nil }
         buf.frameLength = AVAudioFrameCount(frames)
+        let g = gain
         data.withUnsafeBytes { (rawBuf: UnsafeRawBufferPointer) in
             let src = rawBuf.bindMemory(to: Int16.self)
             for f in 0..<frames {
                 for c in 0..<ch {
-                    dst[c][f] = Float(Int16(littleEndian: src[f * ch + c])) / 32768.0
+                    let v = Float(Int16(littleEndian: src[f * ch + c])) / 32768.0 * g
+                    // ⛔ 必须削顶:增益调大后越界的样本会**回卷成反相**,听感是刺啦的爆音,
+                    //   而"更响"和"更难听"会被一起归因给这个旋钮。
+                    dst[c][f] = min(max(v, -1.0), 1.0)
                 }
             }
         }
@@ -3851,6 +3870,18 @@ if CommandLine.arguments.contains("--selftest-speak") {
     }
 
     // 解交错:构造左声道全 +1.0、右声道全 -1.0,错一位就会看出来
+    // ⛔ 2026-07-29:这几条断言**读用户 config 里的 `tts_gain` 当前置** —— 我给它设了默认 1.4,
+    //   这三条当场无缘无故变红(0.5×1.4=0.7)。**闸的前提必须由闸自己写死**,
+    //   这是同一天第二次(第一次是咖啡馆那条读 `voice_send_mode`)。
+    do {
+        let f = projectDir.appendingPathComponent("config.json")
+        var j = (try? Data(contentsOf: f)).flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        j["tts_gain"] = 1.0
+        if let d = try? JSONSerialization.data(withJSONObject: j, options: [.prettyPrinted, .sortedKeys]) {
+            try? d.write(to: f)
+        }
+    }
     let fmt = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
     var d = Data()
     for _ in 0..<64 {
@@ -3868,6 +3899,40 @@ if CommandLine.arguments.contains("--selftest-speak") {
     // 半个采样点的碎片必须被丢掉而不是错位使用
     check(TTS.buffer(from: Data([0x01, 0x02]), format: fmt) == nil,
           "不足一帧的碎块不出缓冲（凑不齐就等下一块，别错位）")
+
+    // ⛔ 播放增益(2026-07-29 作者「声音有点小」)。两条都必须验:**乘上去了**、且**削了顶**。
+    //   只验第一条的话,把增益调大就会静静地爆音,而"更响"和"更难听"会一起算到这个旋钮头上。
+    do {
+        let one = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 1)!
+        var q = Data()
+        for _ in 0..<8 { var v = Int16(16384).littleEndian; withUnsafeBytes(of: &v) { q.append(contentsOf: $0) } }
+        let cfgPath = projectDir.appendingPathComponent("config.json")
+        let saved = try? Data(contentsOf: cfgPath)
+        func setGain(_ g: Double) {
+            var j = (try? Data(contentsOf: cfgPath)).flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            j["tts_gain"] = g
+            if let d = try? JSONSerialization.data(withJSONObject: j, options: [.prettyPrinted, .sortedKeys]) {
+                try? d.write(to: cfgPath)
+            }
+        }
+        // ⛔⛔ 必须先把 buffer 存进变量再取样本 —— `floatChannelData` 是**指向它内部内存的裸指针**,
+        //   写成 `TTS.buffer(...)?.floatChannelData?[0][0]` 一条链,buffer 在表达式末尾就被释放了,
+        //   下标读到的是野指针 ⇒ **SIGSEGV**(2026-07-29 实测 exit=139,而且崩得一声不响:
+        //   stdout 是带缓冲的,段错误把前面所有已通过的断言一起吞了,看起来像"整个自检没跑")。
+        //   上面那段解交错断言之所以没事,正是因为它老老实实先 `let buf = ...`。
+        func sample(_ g: Double) -> Float {
+            setGain(g)
+            guard let b = TTS.buffer(from: q, format: one), let c = b.floatChannelData else { return -9 }
+            return c[0][0]
+        }
+        let base = sample(1.0), up = sample(1.8), clip = sample(4.0)
+        check(abs(base - 0.5) < 0.01 && abs(up - 0.9) < 0.01,
+              "增益真的乘在样本上（1.0→\(base) · 1.8→\(up)；不乘 = 这个旋钮是装饰）")
+        check(clip <= 1.0001 && clip >= 0.999,
+              "过载被削到 ±1.0（实得 \(clip)；不削会回卷成反相 = 刺啦的爆音）")
+        if let s = saved { try? s.write(to: cfgPath) } else { setGain(1.0) }
+    }
 
     // 打断:碰一下标志文件,token 必须变
     let t0 = TTS.shutUpToken()
