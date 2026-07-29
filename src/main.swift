@@ -1798,8 +1798,23 @@ final class Controller {
             appendJSONL(dur: dur, ms: ms, raw: raw, fixed: fixed, fixes: n,
                         dictHash: self.rulesHash, fixDict: dn, fixCanon: cn)
             DispatchQueue.main.async {
-                deliver(fixed)
-                HUD.shared.show(raw: raw, fixed: fixed, fired: n > 0)
+                // ⛔⛔ 2026-07-29 图谱复审查出:`deliver` 有**三个**调用方
+                //   (Composer.flush / deliverInOrder / 这里),而这一条**从不问 Composer
+                //   手上还攥着你之前的话没发** —— 它直接投递。
+                //   可达路径:静音时 VoiceLoop 停了(所以采集互斥不拦按键这条),
+                //   而 Composer 的待发内容**是保留的**(静音语义是「我说完了」不是「刚才那句不算」)。
+                //   ⇒ 静音后马上按住热键说一句,**新的先到、旧的后到**。
+                //   这正是 07-28 加 deliverInOrder 要治的乱序,那次只治了常开麦内部、**没治跨路径**。
+                // ⇒ 修法:Composer 还攥着东西时,**走它的队**而不是另起一条 ——
+                //   复用既有的顺序机制,而不是再写第二套(那正是本项目今天数了一天的病)。
+                if Composer.isHolding {
+                    log("Composer 还攥着前面的话 → 按住说话这句排到它后面,不插队")
+                    Composer.append(raw: raw, fixed: fixed, fired: n > 0)
+                    Composer.flushSoon()
+                } else {
+                    deliver(fixed)
+                    HUD.shared.show(raw: raw, fixed: fixed, fired: n > 0)
+                }
             }
         }
     }
@@ -3581,6 +3596,22 @@ if CommandLine.arguments.contains("--selftest-voice") {
     let after = (try? Data(contentsOf: cfgF)).flatMap {
         try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
     check(after["hotkey"] != nil, "写灵敏度没冲掉 config 里的其它字段（hotkey 还在）")
+    // ⛔ 2026-07-29 图谱复审:写 config 的有**三个**入口(setSens / setSendMode / saveHotKey),
+    //   而这条断言原来只守 setSens 一个。「同一只闸里还有几条腿走同一条路」——
+    //   dev-governance 律三那半。⚠ 而且今天我自己的 --selftest-speak 是第四个写入口,也没人看着。
+    do {
+        let f = projectDir.appendingPathComponent("config.json")
+        for (name, act) in [("setSendMode", { setSendMode(to: "batch") }),
+                            ("saveHotKey", { saveHotKey("voice_mute_key", "rightcmd") })] {
+            let before = (try? Data(contentsOf: f)).flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            act()
+            let after = (try? Data(contentsOf: f)).flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            let lost = before.keys.filter { after[$0] == nil }
+            check(lost.isEmpty, "\(name) 没冲掉 config 里的其它字段（丢了 \(lost.sorted())）")
+        }
+    }
     if let o = orig { try? o.write(to: cfgF) }   // 还原,自检不留痕
 
     // ⛔ 作者 2026-07-28 抓「有时候时间顺序上会切反」→ 顺序投递必须能验。
