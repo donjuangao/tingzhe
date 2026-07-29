@@ -1322,6 +1322,13 @@ enum TTS {
             try? FileManager.default.removeItem(at: speakingFlag)
         }
     }
+    /// 念到一半该不该停。⛔ 抠成纯函数,因为它此前住在一个 0.05s 的定时器闭包里、零断言,
+    /// 而它漏掉的那一半正是 作者 两次报的同一个障:关掉语音模式,声音还在说。
+    /// 只看令牌 = 只认「被打断」;关模式那一下若没走打断那条路,这段就会念到底。
+    static func shouldStop(tokenNow: String, tokenAtStart: String, voiceOn: Bool) -> Bool {
+        tokenNow != tokenAtStart || !voiceOn
+    }
+
     static var isSpeaking: Bool {
         guard let s = try? String(contentsOf: speakingFlag, encoding: .utf8),
               let pid = Int32(s.trimmingCharacters(in: .whitespacesAndNewlines)) else { return false }
@@ -1402,7 +1409,11 @@ final class StreamSpeaker: NSObject, URLSessionDataDelegate {
         let watch = DispatchSource.makeTimerSource(queue: .global())
         watch.schedule(deadline: .now() + 0.05, repeating: 0.05)
         watch.setEventHandler { [weak self] in
-            guard let self = self, TTS.shutUpToken() != self.token else { return }
+            // ⚠ 两个条件都要:令牌变(被打断)**或**语音模式被关掉。
+            //   只看令牌 = 关模式那一下如果没走打断那条路,这段就会念到底。
+            guard let self = self,
+                  TTS.shouldStop(tokenNow: TTS.shutUpToken(), tokenAtStart: self.token,
+                                 voiceOn: VoiceMode.isOn) else { return }
             self.lock.lock(); self.aborted = true; self.lock.unlock()
             self.node.stop()
             self.finished.signal()
@@ -3874,6 +3885,16 @@ if CommandLine.arguments.contains("--speak") {
     guard let key = loadAPIKey() else {
         FileHandle.standardError.write(Data("✗ 没有 API key\n".utf8)); exit(1)
     }
+    // ⛔⛔ 2026-07-29 作者:「我把语音模式关掉了,你的声音仍然在说话。」
+    //   查实(日志,不是印象):07-28 关语音模式 35 次里 **6 次**关掉后 4 秒内仍念完一整段;
+    //   最早 07-28 04:00:47 —— **不是今天修出来的,是 07-28 那个 bug 我只修好了一半,还宣布了完成**。
+    //   那天修的是「当时正在念的那个进程」(Speaker.shutUp 换掉重复的 pkill),
+    //   漏掉的是:`speak-watch` 紧接着会启动**下一段**,而新起的这个进程
+    //   **开机时读一次令牌,之后只在令牌再变时才闭嘴** —— 关语音模式那一下的信号,
+    //   它出生得太晚,根本没赶上。⇒ 出生就先问一句「现在还该念吗」。
+    guard VoiceMode.isOn else {
+        FileHandle.standardError.write(Data("语音模式已关,不念了\n".utf8)); exit(2)
+    }
     exit(StreamSpeaker().speak(text, key: key) ? 0 : 1)
 }
 
@@ -4002,6 +4023,14 @@ if CommandLine.arguments.contains("--selftest-speak") {
     let t0 = TTS.shutUpToken()
     TTS.signalShutUp()
     check(TTS.shutUpToken() != t0, "打断信号会改变 token（正在念的那个进程据此闭嘴）")
+
+    // ⛔ 「该不该停」的两半,缺一不可(作者 两次报同一个障:关掉语音模式声音还在说)
+    check(TTS.shouldStop(tokenNow: "b", tokenAtStart: "a", voiceOn: true),
+          "令牌变了就停（这是「被打断」那一半）")
+    check(TTS.shouldStop(tokenNow: "a", tokenAtStart: "a", voiceOn: false),
+          "语音模式关了就停，哪怕令牌没变（这一半漏了两天 —— 关模式未必走打断那条路）")
+    check(!TTS.shouldStop(tokenNow: "a", tokenAtStart: "a", voiceOn: true),
+          "都没变就接着念（别把正常播放也停了）")
     check(TTS.shutUpFlag.path.hasSuffix("shutup"), "打断信号是文件不是 pkill —— pkill 会连常驻一起杀（同名）")
 
     // ⛔ 换播放方式必须同时换「谁在播」的判据 —— 否则 Speaker.isPlaying 恒 false,

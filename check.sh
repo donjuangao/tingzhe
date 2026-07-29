@@ -775,6 +775,18 @@ fi
 #   本脚本开篇就宣称「闸不许有破坏性副作用」,而破它的正是我新加的那一条。
 #   ⇒ 凡是会读写 config 的自检,一律连 TINGZHE_DIR 一起进沙箱。
 SPK=$(TINGZHE_STATE_DIR="$SANDBOX" TINGZHE_DIR="$SANDBOX" TINGZHE_LOG_DIR="$SANDBOX/logs" $ENGINE --selftest-speak 2>&1 || true)
+
+# ⛔ 出生守卫(2026-07-29 作者 第二次报「关掉语音模式声音还在说」):
+#   新起的 --speak 进程开机读一次令牌,之后只在令牌**再变**时才闭嘴 ——
+#   关模式那一下的信号它出生太晚没赶上,于是照念不误。日志实证:07-28 关模式 35 次里 6 次如此。
+#   ⇒ 出生就先问「现在还该念吗」。这一条只能行为验:状态位不在 ⇒ 必须拒跑(退出码 2)。
+BORN=$(echo "念点什么" | TINGZHE_STATE_DIR="$SANDBOX/nostate" TINGZHE_LOG_DIR="$SANDBOX/logs" \
+        TINGZHE_DIR="$SANDBOX" $ENGINE --speak >/dev/null 2>&1; echo $?)
+if [ "$BORN" = "2" ]; then
+  pass "语音模式关着时 --speak 拒绝出生（关掉之后不会再冒出新的一段）"
+else
+  fail "语音模式关着时 --speak 仍然开念（退出码 ${BORN}，应为 2）"
+fi
 if grep -q "^✓ selftest-speak" <<<"$SPK"; then
   pass "$(grep '^✓ selftest-speak' <<<"$SPK" | sed 's/^✓ selftest-speak: //')"
   grep "⚠ 未断言" <<<"$SPK" | sed 's/^/     /'
