@@ -54,20 +54,13 @@ SYMBOL = [
     (re.compile(r"\n{3,}"), "\n\n"),
 ]
 
-# ⛔ 2026-07-28 作者 抓:「你话说到一半，然后就变成了还有三百八十六个字」。
-# 两个毛病:① 400 太小,我的回复经常上千字 ② 找不到句号时**直接在半句话上砍**。
-# ⭐ 而真正的修法不在这个数字上 —— **是我在语音模式下该写短**。
-#   一个要靠截断来救的回复,本来就不该那么长。这个上限是安全网,不是解法。
-import os as _os
-def _cap():
-    try:
-        import json as _j
-        d = _os.environ.get("TINGZHE_DIR") or _os.path.expanduser("~/Downloads/tingzhe")
-        v = _j.load(open(_os.path.join(d, "config.json"))).get("speak_max_chars")
-        if isinstance(v, (int, float)) and v > 50: return int(v)
-    except Exception: pass
-    return 1000
-MAX_CHARS = _cap()
+# ⛔ 2026-07-29 作者 拍:「把那个上限长度砍掉吧,你感觉那个东西没有用啊。」——**整套截断已删**。
+# 沿革:07-28 他抓「你话说到一半,然后就变成了还有三百八十六个字」,我把 400 提到 1000
+# 并加了「不许在半句话上砍」的规矩。可那只是把难受推远了一点 ——
+# **上限本身才是那个毛病**:它保证了"总有一天你会在句子中间听到「后面还有 N 个字」"。
+# ⭐ 而真正的修法从第一天就写在这儿了:**是我在语音模式下该写短**。
+#   一个要靠截断来救的回复,本来就不该那么长。上限是安全网,不是解法 —— 现在连网也撤了。
+# ⚠ 代价如实说:我要是写了三千字,它会**从头念到尾**,只能靠你开口打断。这是 作者 知情选的。
 
 # ══ 断句层(作者 2026-07-28:「主要是你那个断句断的很扯淡」)════════════════
 # ⛔ 作者 试过 Claude 自带的 read out loud,判词是「不是音色问题,是断句本身有问题」。
@@ -128,17 +121,7 @@ def speakify(text: str) -> str:
     text = re.sub(r"\n+", " ", text)
     text = re.sub(r"，{2,}", "，", text)
     text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > MAX_CHARS:
-        cut = text[:MAX_CHARS]
-        # ⛔ 绝不在半句话上砍 —— 句末标点找不到就退到逗号,再找不到**就整段不截**。
-        # 判据:念完整比念够短重要。截在半句话上的那一下,比多念两句难受得多。
-        m = max(cut.rfind("。"), cut.rfind("！"), cut.rfind("？"), cut.rfind("."))
-        if m < MAX_CHARS // 3:
-            m = max(cut.rfind("，"), cut.rfind("、"), cut.rfind(","))
-        if m < MAX_CHARS // 3:
-            return text        # 找不到干净的断点 → 宁可全念,也不半句话切断
-        cut = cut[: m + 1]
-        text = cut + f" 后面还有{len(text) - len(cut)}个字，在屏幕上。"
+    # ⛔ 这里原本有截断:超过上限就找句号切,再补一句「后面还有 N 个字」。整段已删(见文件头)。
     return text
 
 
@@ -167,23 +150,16 @@ def selftest() -> int:
             if n not in out:
                 print(f"  ✗ 少了「{n}」 ← {src!r} → {out!r}")
                 bad += 1
-    # ⚠ 判据自己先要对:必须构造**真的超过上限**的输入,否则测的是"没截断"这件事
-    long_in = "。".join(["这是一句很长的话"] * (MAX_CHARS // 8 + 40))
-    assert len(long_in) > MAX_CHARS, "自检输入没超过上限,这条测了个寂寞"
+    # ⛔ 这里原本有 4 条断言守「超长要截断且不在半句话上砍」。**随截断一起删**。
+    # 律四(存在审):删掉 X 之后必须同时问「守 X 的那些断言还该存在吗」——
+    # 留着它们会立刻判红,而那个红不是产品坏了,是判据比产品活得久。
+    # ⇒ 反向断言一条,守住「真的删干净了」:三千字进去,必须三千字量级出来,不许出现「后面还有」。
+    long_in = "。".join(["这是一句很长的话"] * 400)
     out = speakify(long_in)
-    if len(out) > MAX_CHARS + 40:
-        print(f"  ✗ 超长没截断（{len(out)} 字）"); bad += 1
-    if "在屏幕上" not in out:
-        print("  ✗ 截断了却没告诉人还有多少"); bad += 1
-    # ⛔ 作者 2026-07-28 亲耳抓出的那条:「你话说到一半，然后就变成了还有三百八十六个字」
-    head = out.split(" 后面还有")[0]
-    if head and head[-1] not in "。！？.，、,":
-        print(f"  ✗ 在半句话上截断了(结尾是 {head[-1]!r})"); bad += 1
-    # ⛔ 反向:找不到干净断点时**宁可全念**,不许硬切
-    nopunct = "啊" * (MAX_CHARS * 2)
-    o2 = speakify(nopunct)
-    if "后面还有" in o2:
-        print("  ✗ 没有标点可断时仍然硬切了（应当整段全念）"); bad += 1
+    if "后面还有" in out or "在屏幕上" in out:
+        print("  ✗ 还在截断（上限已于 2026-07-29 按 作者 拍板整套删除）"); bad += 1
+    if len(out) < len(long_in) * 0.9:
+        print(f"  ✗ 输出比输入短了一大截（{len(long_in)}→{len(out)}），像是还在切"); bad += 1
     # ⛔ 2026-07-28:原来这里有 5 条「断句层」断言(给 macOS `say` 插 [[slnc]] 停顿标记)。
     # 播放挪进 Swift 流式引擎之后,`prosody()` / `--say` **没有任何调用方** ——
     # 只剩这些自检在调它自己。⇒ 整套连同被测函数一起删。
@@ -199,7 +175,7 @@ def selftest() -> int:
 
     if bad:
         print(f"✗ speakify: {bad} 项不过"); return 1
-    print(f"✓ speakify: {len(CASES)} 条形态 + 4 条断句判据全过 · 超长截断并告知")
+    print(f"✓ speakify: {len(CASES)} 条形态 + 4 条断句判据全过 · 不再截断(上限已删)")
     return 0
 
 

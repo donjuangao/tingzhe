@@ -1020,8 +1020,25 @@ final class VoiceLoop {
         return (sum / Float(n)).squareRoot()
     }
 
+    /// 帧级电平日志。⛔ 2026-07-29 作者 拍 D2甲「做,但只在开关打开时」。
+    /// 立案理由:当天关于收音门槛的**每一个推断都建立在同一个盲区上** ——
+    /// 日志只打「每段一个峰值」,而门槛是**逐帧**比的。我拿段级统计量定了一个帧级阈值,
+    /// 当场把 作者 说话切碎。**看不见的量,只能靠猜。**
+    /// ⚠ 默认关:开着会把日志刷爆(48kHz 下每秒几十行),而且它只在排障那几分钟有用。
+    private var dbgFrames: Bool { (hudConfig()["voice_debug_frames"] as? Bool) ?? false }
+    private var dbgLast = Date.distantPast
+
     private func consume(_ buf: AVAudioPCMBuffer, _ fmt: AVAudioFormat) {
         let level = rms(buf)
+        if dbgFrames, Date().timeIntervalSince(dbgLast) > 0.1 {
+            dbgLast = Date()
+            // 每 100ms 一行:电平 · 起录门槛 · 续录门槛 · 此刻算不算人声 · 在不在一句话里
+            log(String(format: "帧 %.4f | 起 %.4f 续 %.4f | %@ | %@",
+                       level, threshold, holdThreshold,
+                       VoiceLoop.isVoiceFrame(level: level, start: threshold,
+                                              hold: holdThreshold, speaking: speaking) ? "人声" : "静",
+                       speaking ? "录音中" : "待机"))
+        }
         // ⚠ 顺序不能反:先用**更新前**的门槛判这一帧是不是人声,再拿这个判定去更新底噪。
         //   反过来 = 这一帧参与抬高它自己要跨过的坎(原来的写法就是这样)。
         let isVoice = VoiceLoop.isVoiceFrame(level: level, start: threshold,
