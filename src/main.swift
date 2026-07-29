@@ -892,9 +892,27 @@ final class VoiceLoop {
     static func gateFrom(floor: Float, startRMS: Float, mult: Float, ceiling: Float) -> Float {
         max(startRMS, min(floor * mult, ceiling))
     }
+
+    /// 这一帧算不算人声。⛔ 抠成纯函数,是因为它此前是 `consume` 里的一行
+    /// `level > threshold` —— **起录和续录共用一个门槛,而这件事没有任何断言看着**。
+    /// 2026-07-29 我把起录门槛提到 0.10 挡噪音,当场把 作者 的话切碎:
+    /// 说话时字与字之间的瞬时电平常掉到 0.10 以下 ⇒ 判静音 ⇒ 攒够 1400ms 就切。
+    /// **一个能挡住噪音的门槛,必然也会切碎说话** —— 除非这两件事用两个数。
+    static func isVoiceFrame(level: Float, start: Float, hold: Float, speaking: Bool) -> Bool {
+        level > (speaking ? hold : start)
+    }
     var threshold: Float {
         VoiceLoop.gateFrom(floor: floorRMS, startRMS: startRMS, mult: gateMult, ceiling: gateCeiling)
     }
+    /// ⛔⛔ 2026-07-29 作者:「我没说完话它就直接切了。」**这是我弄的。**
+    /// 我把 `voice_start_rms` 从 0.02 提到 0.10 来挡噪音,而 `consume` 里
+    /// **起录和续录用的是同一个门槛**(`level > threshold`)——
+    /// 我是拿「整段的峰值」(0.15–0.25)定的那个值,可它是**逐帧**比的,
+    /// 而说话时字与字之间的瞬时电平经常掉到 0.10 以下 ⇒ 被判成静音 ⇒ 攒够 1400ms 就切。
+    /// **拿"段级统计量"去定一个"帧级判据"的阈值 —— 这是我这次真正的错。**
+    /// ⇒ 补标准 VAD 的滞回:**起录门槛高(挡噪音),续录门槛低(别把字缝当静音)**。
+    /// 一个能挡住噪音的门槛,必然也会切碎说话 —— 除非这两件事用两个数。
+    var holdThreshold: Float { threshold * Float((hudConfig()["voice_hold_ratio"] as? Double) ?? 0.35) }
     private var silenceEnd: TimeInterval { (hudConfig()["voice_silence_ms"] as? Double ?? 1400) / 1000 }
     /// 本段说话的最大音量 —— ⛔ 诊断用,而且是**校准门槛的唯一真数据**:
     /// 「别人的话进来了」和「我的话进不来」都要拿这个数跟门槛比才知道该往哪调,
@@ -1006,7 +1024,8 @@ final class VoiceLoop {
         let level = rms(buf)
         // ⚠ 顺序不能反:先用**更新前**的门槛判这一帧是不是人声,再拿这个判定去更新底噪。
         //   反过来 = 这一帧参与抬高它自己要跨过的坎(原来的写法就是这样)。
-        let isVoice = level > threshold
+        let isVoice = VoiceLoop.isVoiceFrame(level: level, start: threshold,
+                                             hold: holdThreshold, speaking: speaking)
         if !speaking { floorRMS = VoiceLoop.updateFloor(floorRMS, level: level, isVoice: isVoice) }
 
         // 每帧约 buf.frameLength / sampleRate 秒
@@ -3762,6 +3781,18 @@ if CommandLine.arguments.contains("--selftest-voice") {
 
     check(VoiceLoop.shared.onsetMs >= 150,
           "起录要求连续发声 ≥\(Int(VoiceLoop.shared.onsetMs))ms（瞬时噪音撑不到）")
+
+    // ⛔ 滞回:起录高、续录低。三条一起才守得住 —— 只验前两条的话,
+    //   把 hold 改成等于 start(= 退回单门槛)不会有任何东西变红,而那正是切碎说话的写法。
+    do {
+        let st: Float = 0.10, hd: Float = 0.035, mid: Float = 0.06
+        check(!VoiceLoop.isVoiceFrame(level: mid, start: st, hold: hd, speaking: false),
+              "没开口时，门槛之下的电平不起录（挡噪音那一半）")
+        check(VoiceLoop.isVoiceFrame(level: mid, start: st, hold: hd, speaking: true),
+              "已经在说时，同一个电平算人声（不切碎说话那一半 —— 2026-07-29 就是缺它）")
+        check(VoiceLoop.shared.holdThreshold < VoiceLoop.shared.threshold,
+              "续录门槛严格低于起录门槛（相等 = 退回单门槛，说话必被切碎）")
+    }
     check(VoiceLoop.shared.gateMult >= 3.0,
           "门槛倍数 \(VoiceLoop.shared.gateMult)×底噪（越大越不容易被环境音触发）")
 
