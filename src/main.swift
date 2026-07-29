@@ -1641,8 +1641,20 @@ final class Controller {
             guard let raw = transcribe(url, key: self.key), !raw.isEmpty else { return }
             let (fixed, dn, cn) = correct(raw, self.rules, self.canon, self.protected)
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
-            log("✓ 常开麦一句 → \(ms)ms" + ((dn + cn) > 0 ? " · 修正 \(dn + cn) 处" : ""))
-            appendJSONL(dur: 0, ms: ms, raw: raw, fixed: fixed, fixes: dn + cn,
+            // ⚠ 把时长也打出来 —— 它恒为 0 这件事之所以躲了这么久,正因为**日志里看不见它**。
+            //   (量在下面 appendJSONL 那处;这里先算一次给日志用,省得量两遍)
+            let durLog = (try? AVAudioFile(forReading: url))
+                .map { Double($0.length) / $0.fileFormat.sampleRate } ?? 0
+            log(String(format: "✓ 常开麦一句 %.1fs → %dms", durLog, ms)
+                + ((dn + cn) > 0 ? " · 修正 \(dn + cn) 处" : ""))
+            // ⛔⛔ 2026-07-29:这里原来是**硬编码的 `dur: 0`** —— 一个从没填上的占位。
+            //   后果不是"少个字段":`transcripts.jsonl` 是按 session 分词表要用的**评测原料**,
+            //   而它里面 **159/348 条(46%)的 `audio_sec` 恒为 0** —— 全是常开麦说出来的真话。
+            //   我今天差点据此写了一条「太短就丢弃」的守卫,**那会静默丢掉近一半真实语料**。
+            //   ⇒ 教训不是"补个字段",是:**一个恒为 0 的字段比缺这个字段更危险** ——
+            //     缺字段会让人去查,恒为 0 会让人拿它当真值去过滤。
+            //   ⚠ 历史那 159 条的真实时长**不可回溯**(音频转写完即删)。
+            appendJSONL(dur: durLog, ms: ms, raw: raw, fixed: fixed, fixes: dn + cn,
                         dictHash: self.rulesHash, fixDict: dn, fixCanon: cn)
             self.deliverInOrder(mySeq, raw, fixed, dn, cn)
         }
