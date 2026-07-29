@@ -2023,6 +2023,21 @@ final class StatusBar: NSObject, NSMenuDelegate {
         let t = d.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
     }
+    /// 挑「跟谁说话」。⛔ **两个入口(菜单 / 胶囊面板)必须都走这一个函数。**
+    /// 2026-07-29 图谱复审查出:它们此前是两份实现,而且已经漂成两种行为 ——
+    /// 菜单支持「再点一次取消选择」且会顺手打开语音模式,面板两样都没有。
+    /// 同一个动作、两个入口、两种表现,而用的人不知道自己点的是哪一份。
+    /// 作者 当日拍板(面板 8178c3e4)两条,都选了**更少魔法**的那一侧:
+    ///  · 问题一 → **不取消**:点了就是选中。要停用「整个关掉」,别让「点两下」有特殊含义
+    ///    (手抖点两下就把自己关静音,比多按一个按钮难受)。
+    ///  · 问题二 → **不自动开麦**:挑会话只是挑会话,**开麦永远是他显式按的**。
+    /// ⚠ R77「能关掉不想继续对话的 session」仍然成立 —— 由「整个关掉」承担(两个入口都有)。
+    /// ⇒ 抽成一个函数而不是「把 A 改得跟 B 一样」:后者下次还会漂,前者结构上漂不了。
+    static func selectPartner(_ sid: String) {
+        Speaker.shutUp()            // 切过去先别听上一个的尾巴
+        setPartner(sid)
+    }
+
     static func setPartner(_ sid: String?) {
         if let sid = sid {
             try? FileManager.default.createDirectory(at: partnerURL.deletingLastPathComponent(),
@@ -2144,9 +2159,7 @@ final class StatusBar: NSObject, NSMenuDelegate {
     /// 否则刚切过去就先听完上一个的尾巴,正是 作者 说的「一股脑倒给我」。
     @objc private func pickSession(_ sender: NSMenuItem) {
         guard let sid = sender.representedObject as? String else { return }
-        Speaker.shutUp()
-        StatusBar.setPartner(StatusBar.partner == sid ? nil : sid)
-        if !VoiceMode.isOn { VoiceMode.setOn(true) }
+        StatusBar.selectPartner(sid)
         refresh()
     }
 
@@ -2458,8 +2471,7 @@ final class Picker {
 
     @objc private func pick(_ sender: NSButton) {
         guard let sid = sender.identifier?.rawValue else { return }
-        Speaker.shutUp()                    // 切过去先别听上一个的尾巴
-        StatusBar.setPartner(sid)
+        StatusBar.selectPartner(sid)
         close()
     }
     /// 写回 config.json —— ⛔ 必须**保留其它字段**,不能整个覆盖
@@ -3876,6 +3888,21 @@ if CommandLine.arguments.contains("--selftest-voice") {
     check(VoiceLoop.shared.onsetMs >= 150,
           "起录要求连续发声 ≥\(Int(VoiceLoop.shared.onsetMs))ms（瞬时噪音撑不到）")
 
+    // ⛔ 挑会话:作者 2026-07-29 拍的两条,都得能验(面板 8178c3e4)
+    do {
+        VoiceMode.setOn(false)
+        StatusBar.setPartner(nil)
+        StatusBar.selectPartner("sess-A")
+        check(StatusBar.partner == "sess-A", "挑一个会话 → 记下它")
+        check(!VoiceMode.isOn,
+              "挑会话**不自动开麦**（作者 拍：开麦永远是我自己按的）")
+        StatusBar.selectPartner("sess-A")
+        check(StatusBar.partner == "sess-A",
+              "再点一次同一个会话**仍然是它**，不取消（作者 拍：手抖点两下不该把自己关静音）")
+        StatusBar.selectPartner("sess-B")
+        check(StatusBar.partner == "sess-B", "点别的会话就换过去")
+        StatusBar.setPartner(nil)
+    }
     // ⛔ 焦点落点判据(2026-07-29 作者:没点对话框说话 → 字粘进会话标题栏,把 session 改名了)
     //   窗口:y=100 高=800 ⇒ 底部输入区 = 底边 ≥ 580
     do {
