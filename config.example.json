@@ -9,8 +9,10 @@
     "ctrl+opt+space 组合键（不需辅助功能权限的兜底）"
   ],
   "_tts_gain_说明": "念给你听的音量倍数。1.0=原样。**热重载**，改完下一句就生效。⚠ 超过 1.5 峰值会削顶（会刺啦），源音频实测峰值 0.675 ⇒ 1.4 刚好顶满不过载。声音偏小的元凶多半是回声消除（它是给通话设计的，会压低输出防回授），而常开麦必须开着它。",
+  "_voice_hold_ratio_说明": "续录门槛 = 起录门槛 × 它。⛔ 起录和续录必须是两个数：一个能挡住噪音的门槛，必然也会把说话时字与字之间的字缝当成静音，于是没说完就被切。被切早了调小，说完了迟迟不发调大。热重载。",
   "_voice_send_after_ms_说明": "说完多久才把话发出去（含回车）。3200 = 你可以中间停 3.2 秒想一想，仍算同一条。嫌它慢就调小，被切碎就调大。热重载，改完就生效。只在 batch 模式下用。",
   "_voice_send_mode_说明": "batch = 攒到你真停下来再发一条（边想边说不被切碎）· instant = 一段一条立刻发（快问快答）。徽章面板上能点着切，热重载。",
+  "_voice_start_rms_说明": "起录的绝对下限。门槛 = max(它, 底噪×voice_gate_mult)。⚠ 安静房间底噪常只有 0.0002，×5 也才 0.001，所以真正生效的一直是这个下限——不设它，「灵敏度调到最钝」就是空拧。热重载。",
   "_快捷键_两条硬规矩": "① 裸键（没有修饰键）会被拒装，因为你打字时它会乱触发 —— F1-F20 除外。② 三把键不许互相撞，也不许占用右⌥（按住说话 + 双击否决用的）和右⌘（它是 ⌘C/⌘V/⌘Tab 的修饰键）。改完跑 ./check.sh 会替你查。",
   "_快捷键_写法": "任意修饰键组合 + 任意主键，大小写随意。分隔符 + 或 -。修饰键：cmd/command/⌘ · ctrl/control/⌃ · opt/option/alt/⌥ · shift/⇧。主键：a-z · 0-9 · f1-f20 · space/return/tab/escape/delete/方向键/comma/period/slash/minus/equal/grave/quote/semicolon/backslash/leftbracket/rightbracket/home/end/pageup/pagedown。例：ctrl+opt+v · cmd+shift+m · ⌃⌥space · f13 · ctrl-opt-1。设成 none = 不绑这把键。",
   "_快捷键_改完要重启": "这三把是启动时装的监听器，改完要 ./install-agent.sh install。（灵敏度/发送方式/词表是热重载，不用重启。）",
@@ -18,10 +20,11 @@
   "hotkey": "rightOption",
   "tts_gain": 1.4,
   "voice_gate_mult": 3.5,
+  "voice_hold_ratio": 0.2,
   "voice_mode_key": "ctrl+opt+b",
   "voice_mute_key": "ctrl+opt+m",
   "voice_send_after_ms": 3200,
   "voice_send_mode": "batch",
-  "voice_start_rms": 0.035,
+  "voice_start_rms": 0.1,
   "voice_toggle_key": "ctrl+opt+v"
 }
