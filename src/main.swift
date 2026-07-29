@@ -479,18 +479,25 @@ func transcribe(_ fileURL: URL, key: String) -> String? {
 /// 没有辅助功能权限时降级为「只放剪贴板」,并告诉用户自己按 ⌘V。
 /// 目标 app 里没有焦点元素时,点一下它的输入框 —— 否则 ⌘V 没有落点。
 /// ⚠ 会动一下鼠标,但**立刻放回原处**;只在语音模式且确实没焦点时才做。
+/// 焦点落在这儿,算不算「输入框」。⛔ 抠成纯函数,因为它原来是一句
+/// `if 有焦点元素 { return }` —— **只问有没有,不问是不是**。
+/// 2026-07-29 作者 实测:他没点对话框就说话,字**粘进了会话标题栏、把 session 改名了**。
+/// 病根就在那一句:标题栏也是个可编辑文本框,于是它认为「已经有落点了,别多事」。
+/// ⇒ 判据改成**位置**:输入框在窗口底部,焦点不在底部区域就当没落点,去点输入框。
+/// 用位置不用角色名(AXTextArea/AXTextField),是因为角色名随 app 版本变,而「输入框在底下」不变。
+func isComposerZone(focusY: CGFloat, focusH: CGFloat, winY: CGFloat, winH: CGFloat) -> Bool {
+    guard winH > 200 else { return false }
+    // 焦点元素的**底边**必须落在窗口下 40% 里 —— 标题栏/侧栏/搜索框都在上面
+    return (focusY + focusH) >= winY + winH * 0.60
+}
+
 func focusComposerIfNeeded(appName: String) {
     guard AXIsProcessTrusted() else { return }
     guard let app = NSWorkspace.shared.runningApplications
             .first(where: { $0.localizedName == appName }) else { return }
     let ax = AXUIElementCreateApplication(app.processIdentifier)
 
-    var focused: AnyObject?
-    if AXUIElementCopyAttributeValue(ax, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-       focused != nil {
-        return                                   // 已经有落点,别多事
-    }
-    // 找主窗口的位置与大小
+    // 先拿窗口 —— 判「焦点是不是输入框」要靠它的几何,所以顺序跟原来反过来
     var winsV: AnyObject?
     guard AXUIElementCopyAttributeValue(ax, kAXWindowsAttribute as CFString, &winsV) == .success,
           let wins = winsV as? [AXUIElement], let w = wins.first else { return }
@@ -509,6 +516,34 @@ func focusComposerIfNeeded(appName: String) {
         return AXValueGetValue(v as! AXValue, .cgSize, &sz) ? sz : nil
     }
     guard let pos = point(kAXPositionAttribute), let sz = size(kAXSizeAttribute), sz.height > 200 else { return }
+
+    // 有焦点元素时,还要看它**在哪** —— 在底部输入区才认,否则当没落点(见 isComposerZone 头注)
+    var focused: AnyObject?
+    if AXUIElementCopyAttributeValue(ax, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+       let f = focused, CFGetTypeID(f) == AXUIElementGetTypeID() {
+        let fe = f as! AXUIElement
+        func fpoint(_ attr: String) -> CGPoint? {
+            var v: AnyObject?
+            guard AXUIElementCopyAttributeValue(fe, attr as CFString, &v) == .success, let v = v,
+                  CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+            var q = CGPoint.zero
+            return AXValueGetValue(v as! AXValue, .cgPoint, &q) ? q : nil
+        }
+        func fsize(_ attr: String) -> CGSize? {
+            var v: AnyObject?
+            guard AXUIElementCopyAttributeValue(fe, attr as CFString, &v) == .success, let v = v,
+                  CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+            var q = CGSize.zero
+            return AXValueGetValue(v as! AXValue, .cgSize, &q) ? q : nil
+        }
+        // ⚠ 量不到几何时**当它不是输入框** —— 走安全侧:多点一下输入框,
+        //   代价是一次鼠标点击;而放行的代价是把 作者 的话粘进标题栏。
+        if let fp = fpoint(kAXPositionAttribute), let fs = fsize(kAXSizeAttribute),
+           isComposerZone(focusY: fp.y, focusH: fs.height, winY: pos.y, winH: sz.height) {
+            return                               // 焦点确实在输入区,别多事
+        }
+        log("焦点不在输入区(y=\(fpoint(kAXPositionAttribute)?.y ?? -1)),去点输入框")
+    }
 
     // 输入框在窗口底部;留 55pt 余量避开最底下那条
     let target = CGPoint(x: pos.x + sz.width / 2, y: pos.y + sz.height - 55)
@@ -3810,6 +3845,18 @@ if CommandLine.arguments.contains("--selftest-voice") {
     check(VoiceLoop.shared.onsetMs >= 150,
           "起录要求连续发声 ≥\(Int(VoiceLoop.shared.onsetMs))ms（瞬时噪音撑不到）")
 
+    // ⛔ 焦点落点判据(2026-07-29 作者:没点对话框说话 → 字粘进会话标题栏,把 session 改名了)
+    //   窗口:y=100 高=800 ⇒ 底部输入区 = 底边 ≥ 580
+    do {
+        check(isComposerZone(focusY: 830, focusH: 60, winY: 100, winH: 800),
+              "焦点在窗口底部 → 认它是输入框（正常那一条）")
+        check(!isComposerZone(focusY: 120, focusH: 24, winY: 100, winH: 800),
+              "焦点在窗口顶部（会话标题栏那种）→ 不认，去点输入框（作者 被改名就是这条漏了）")
+        check(!isComposerZone(focusY: 400, focusH: 24, winY: 100, winH: 800),
+              "焦点在窗口中部（消息列表/搜索框）→ 也不认")
+        check(!isComposerZone(focusY: 830, focusH: 60, winY: 100, winH: 100),
+              "窗口太小/量不出来 → 不认（安全侧：宁可多点一下，也别粘错地方）")
+    }
     // ⛔ 滞回:起录高、续录低。三条一起才守得住 —— 只验前两条的话,
     //   把 hold 改成等于 start(= 退回单门槛)不会有任何东西变红,而那正是切碎说话的写法。
     do {
