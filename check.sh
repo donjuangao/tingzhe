@@ -770,7 +770,11 @@ fi
 
 # ⛔ 流式朗读(MOSS-TTS-v1.5-Flash)。三个参数少一个就退回非流式,而症状是"怎么还是慢"、不报错;
 # 采样率/声道写错不报错,只会让你听见花栗鼠。都钉在闸里。
-SPK=$(TINGZHE_STATE_DIR="$SANDBOX" TINGZHE_LOG_DIR="$SANDBOX/logs" $ENGINE --selftest-speak 2>&1 || true)
+# ⛔ 2026-07-29 踩过的坑:这一行原来**没给 TINGZHE_DIR** —— 而我当天给 --selftest-speak 加了
+#   「改 tts_gain 再验」的断言,于是它写的是 **作者 的生产 config.json**,把他的音量设置改回 1.0。
+#   本脚本开篇就宣称「闸不许有破坏性副作用」,而破它的正是我新加的那一条。
+#   ⇒ 凡是会读写 config 的自检,一律连 TINGZHE_DIR 一起进沙箱。
+SPK=$(TINGZHE_STATE_DIR="$SANDBOX" TINGZHE_DIR="$SANDBOX" TINGZHE_LOG_DIR="$SANDBOX/logs" $ENGINE --selftest-speak 2>&1 || true)
 if grep -q "^✓ selftest-speak" <<<"$SPK"; then
   pass "$(grep '^✓ selftest-speak' <<<"$SPK" | sed 's/^✓ selftest-speak: //')"
   grep "⚠ 未断言" <<<"$SPK" | sed 's/^/     /'

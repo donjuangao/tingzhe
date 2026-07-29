@@ -3873,6 +3873,14 @@ if CommandLine.arguments.contains("--selftest-speak") {
     // ⛔ 2026-07-29:这几条断言**读用户 config 里的 `tts_gain` 当前置** —— 我给它设了默认 1.4,
     //   这三条当场无缘无故变红(0.5×1.4=0.7)。**闸的前提必须由闸自己写死**,
     //   这是同一天第二次(第一次是咖啡馆那条读 `voice_send_mode`)。
+    // ⛔⛔ 2026-07-29 踩过的坑:这一段原来**只写不还** —— check.sh 又漏了 `TINGZHE_DIR`,
+    //   于是它把 作者 生产 config 里的 `tts_gain` 从 1.4 改回 1.0 并留在那儿,
+    //   他当天报的「声音还是小」正是这么来的:**我给的旋钮被我自己的闸拧回去了**。
+    //   两处都修:check.sh 那行补沙箱(治病因)+ 这里写完必还原(治手法)。
+    let cfgSaved = try? Data(contentsOf: projectDir.appendingPathComponent("config.json"))
+    defer {
+        if let d = cfgSaved { try? d.write(to: projectDir.appendingPathComponent("config.json")) }
+    }
     do {
         let f = projectDir.appendingPathComponent("config.json")
         var j = (try? Data(contentsOf: f)).flatMap {
