@@ -1551,6 +1551,19 @@ final class Controller {
 
     func startRecording() {
         guard !busy, recorder == nil else { return }
+        // ⛔⛔ 2026-07-29 作者 抓:「为什么你会同时两条路径去采集呢?」
+        //   查实(日志,不是印象):07-25/26/27 按住说话 10/38/**95** 次,重叠 **0/0/0**;
+        //   07-28 常开麦上线当天首次出现 6 次 —— **是 07-28 那个功能带来的,不是今天的修改**。
+        //   病根一句话:**两条采集路径互不知道对方存在** ——
+        //   这里只守 `!busy, recorder == nil`(只看自己那条路),从不问常开麦在不在跑;
+        //   `beginTurn()` 也从不问按键路径。于是同一句话被录两份、发两次 MOSS,
+        //   还往评测原料里落两条记录。
+        //   ⇒ 让路给已经在跑的那条:语音模式下你的话**本来就在被采**,按住热键加不了任何东西。
+        //   ⚠ 只挡"常开麦真的在跑"这一种情况 —— 语音模式开着但静音时,按键照常可用。
+        guard !VoiceLoop.shared.isRunning else {
+            log("常开麦正开着,按住说话这条路让路(你的话已经在被采了,不重复录一份)")
+            return
+        }
         reloadTablesIfChanged()
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("tingzhe-\(UUID().uuidString).m4a")
