@@ -885,7 +885,9 @@ final class VoiceLoop {
     private var floorRMS: Float = 0.006   // 环境底噪,自适应
 
     /// ⛔ 阈值全部 config 驱动 —— 改一个数不该花掉一次重新构建+重授权(浮层那两个字段同款教训)
-    private var startRMS: Float { Float((hudConfig()["voice_start_rms"] as? Double) ?? 0.02) }
+    /// ⚠ 从 `private` 放开到 `var`,跟旁边的 `gateMult`/`gateCeiling` 一致 ——
+    /// 闸要读**生效值**才能守住下面 `adaptiveAlive` 那条不变式(读不到就只能验预设表,那正是它的盲区)。
+    var startRMS: Float { Float((hudConfig()["voice_start_rms"] as? Double) ?? 0.02) }
     /// ⭐ 灵敏度用**倍数**而不是绝对值 —— 安静房间和开着空调的房间底噪差很多,
     /// 绝对阈值在一个环境里调好,换个环境就废。倍数是相对底噪的,自动跟着走。
     /// 作者 2026-07-28:「加一个交互来调收音的敏感程度」→ 三档,面板上点。
@@ -897,7 +899,18 @@ final class VoiceLoop {
     var onsetMs: Double { (hudConfig()["voice_onset_ms"] as? Double) ?? 260 }
     /// 门槛上限 —— 底噪再高,也不许把门槛顶到"正常说话根本进不来"。
     /// 没有它,嘈杂环境里门槛可以无上限地涨,而**涨到听不见你之后就再也降不回来**(没人说话=没帧证明它太高)。
-    var gateCeiling: Float { Float((hudConfig()["voice_gate_ceiling"] as? Double) ?? 0.09) }
+    /// ⛔⛔ 2026-07-30:它**必须高于** `voice_start_rms`,否则 `min(底噪×倍数, ceiling)` 恒 ≤ ceiling
+    /// < startRMS ⇒ 外面那层 `max(startRMS, …)` **恒等于 startRMS** ⇒ 底噪自适应、倍数、
+    /// 以及这个上限**它自己**,三者一起变成死代码。
+    /// 实证:我 07-29 把 startRMS 手填成 0.10 而这里是 0.09 ⇒ 门槛在**咖啡馆和安静卧室同为 0.10**
+    /// (常开麦日志 37 行,门槛逐字全是 `0.1000`,而同期底噪是 0.0001–0.0002)。
+    /// ⇒ 抬到 0.14:安静房间门槛仍是 max(0.10, 0.0009)=**0.10,手感一字不变**;
+    ///   嘈杂环境重新能自己涨上去(底噪 0.03 → 0.135),而 0.14 仍然封住"涨到听不见你"。
+    /// ⚠ 不改 `gateFrom` 的公式 —— 闸里有三条断言直接调它并传字面上限,动公式会连坐。
+    var gateCeiling: Float { Float((hudConfig()["voice_gate_ceiling"] as? Double) ?? 0.14) }
+    /// 自适应还活着吗。⛔ 单独抠出来是因为它失效时**完全静默** ——
+    /// 门槛照样有值、日志照样打印、三档预设那条闸照样绿(它验的是预设表,不是生效配置)。
+    static func adaptiveAlive(startRMS: Float, ceiling: Float) -> Bool { startRMS < ceiling }
 
     /// ⛔⛔ 2026-07-28 咖啡馆第二次 —— 作者:「我话没说完就从收音状态切回听着了」,而且之后再也收不到。
     /// 根因是原来那一行 `if !speaking { floorRMS = floorRMS*0.995 + level*0.005 }`:
@@ -936,6 +949,25 @@ final class VoiceLoop {
     static func isVoiceFrame(level: Float, start: Float, hold: Float, speaking: Bool) -> Bool {
         level > (speaking ? hold : start)
     }
+
+    /// 一段采集该怎么收尾。⛔ 抠成纯函数的理由跟上面 `isVoiceFrame` 一字不差:
+    /// 它原来是 `consume` 里的**一行** `if (静音够久 && 够长) || dur > maxTurn { endTurn() }` ——
+    /// **两条腿写在同一行上,而只有左边那条(静音判定)有断言看着**。
+    /// 2026-07-30 作者 第四次报「说着说着就被切了」,查实是**右边那条**:`maxTurn` 30 秒到点硬切,
+    /// 跟电平、门槛、滞回全都无关 —— 我前三轮修的都是左边那条,所以怎么调都不好。
+    /// 日志形状就是一道硬墙:常开麦 37 段里 **25–30s 区间一段都没有**,两段整整齐齐停在 30.2s;
+    /// 而按住说话那条路不看 maxTurn(由松手决定),同期最长录到 88.3s。
+    /// ⇒ 上限**仍然要留**(嘈杂环境里 `lastVoiceAt` 会被持续刷新,不封顶就是一个无限增长的文件),
+    ///   但它到点时**你还在说** —— 那不是「这句话说完了」,是「这一段太长了」。
+    ///   两件事必须给出**不同的收尾动作**,否则徽章会谎报「不听你了」(作者 原话:「听着那个 icon 都直接变了」)。
+    enum TurnEnd { case keepGoing, send, discard, roll }
+    static func turnEndDecision(sinceVoice: TimeInterval, dur: TimeInterval,
+                                silenceEnd: TimeInterval, minTurn: TimeInterval,
+                                maxTurn: TimeInterval) -> TurnEnd {
+        if sinceVoice > silenceEnd { return dur > minTurn ? .send : .discard }
+        return dur > maxTurn ? .roll : .keepGoing
+    }
+
     var threshold: Float {
         VoiceLoop.gateFrom(floor: floorRMS, startRMS: startRMS, mult: gateMult, ceiling: gateCeiling)
     }
@@ -1098,12 +1130,15 @@ final class VoiceLoop {
         if speaking {
             turnPeak = max(turnPeak, level)
             try? file?.write(from: buf)
-            let sinceVoice = Date().timeIntervalSince(lastVoiceAt)
-            let dur = turnDuration()
-            if (sinceVoice > silenceEnd && dur > minTurn) || dur > maxTurn {
-                endTurn()
-            } else if sinceVoice > silenceEnd {
-                cancelTurn()          // 太短 = 咳嗽/杂音,丢掉别发
+            switch VoiceLoop.turnEndDecision(
+                    sinceVoice: Date().timeIntervalSince(lastVoiceAt), dur: turnDuration(),
+                    silenceEnd: silenceEnd, minTurn: minTurn, maxTurn: maxTurn) {
+            case .send:      endTurn()
+            case .discard:   cancelTurn()          // 太短 = 咳嗽/杂音,丢掉别发
+            case .roll:                            // 上限到点但你还在说 → 换一段接着录,界面不动
+                endTurn(rollingOver: true)
+                beginTurn(fmt, rollingOver: true)
+            case .keepGoing: break
             }
         }
     }
@@ -1127,15 +1162,17 @@ final class VoiceLoop {
         }
     }
 
-    private func beginTurn(_ fmt: AVAudioFormat) {
-        rememberFocus()
-        Composer.userSpeaking()          // 你又开口了 → 撤掉待发计时器
+    /// - Parameter rollingOver: 由 `maxTurn` 滚动切段而来,不是你新开口。
+    ///   ⇒ **不重取焦点**(真正开口那一刻记住的那个才是对的;中途你可能点过别处)、**不响提示音**。
+    private func beginTurn(_ fmt: AVAudioFormat, rollingOver: Bool = false) {
+        if !rollingOver { rememberFocus() }
+        Composer.userSpeaking()          // 你又开口了 → 撤掉待发计时器（滚动切段时更要撤）
 
         let u = FileManager.default.temporaryDirectory
             .appendingPathComponent("moss-turn-\(UUID().uuidString).caf")
         guard let f = try? AVAudioFile(forWriting: u, settings: fmt.settings) else { return }
         file = f; fileURL = u; speaking = true; turnStart = Date()
-        beep("Tink")
+        if !rollingOver { beep("Tink") }
     }
 
     private func cancelTurn() {
@@ -1149,15 +1186,20 @@ final class VoiceLoop {
         Composer.arm()
     }
 
-    private func endTurn() {
+    /// - Parameter rollingOver: `maxTurn` 到点但你**还在说** —— 这一段照样落盘去转写
+    ///   (Composer 本来就会把前后两段拼成一条消息),但**不落图标、不响提示音**:
+    ///   界面必须继续说「在收」,因为事实就是还在收。默认 `false` ⇒ 另外四个调用者
+    ///   (`finishAndStop` / 静音 / `reconcile` / `start`)行为一字不变。
+    private func endTurn(rollingOver: Bool = false) {
         guard let u = fileURL else { cancelTurn(); return }
         file = nil; fileURL = nil; speaking = false
-        VoiceBadge.shared.setCapturing(false)
+        if !rollingOver { VoiceBadge.shared.setCapturing(false) }
         // 诊断:下次再出现「说着说着就聋了」,日志里直接有数,不用再靠推理。
-        log(String(format: "一段结束 · 峰值 %.4f · 门槛 %.4f · 底噪 %.4f（峰值/门槛 = %.1f 倍）",
+        log(String(format: "一段%@ · 峰值 %.4f · 门槛 %.4f · 底噪 %.4f（峰值/门槛 = %.1f 倍）",
+                   rollingOver ? "滚动切段(你还在说)" : "结束",
                    turnPeak, threshold, floorRMS, turnPeak / max(threshold, 0.0001)))
         turnPeak = 0
-        beep("Pop")
+        if !rollingOver { beep("Pop") }
         Controller.shared.transcribeTurn(u)
     }
 }
@@ -3865,6 +3907,45 @@ if CommandLine.arguments.contains("--selftest-voice") {
               "底噪再离谱，门槛也封顶在 0.09（不封顶 = 涨到听不见你之后再没帧能证明它太高）")
         check(VoiceLoop.gateFrom(floor: 0.0, startRMS: 0.02, mult: 5, ceiling: 0.09) == 0.02,
               "再安静也不低于 startRMS（否则呼吸声都算说话）")
+
+        // ⛔⛔ 2026-07-30 作者 第四次报「说着说着被切」查出的第二条:上限压在下限底下 ⇒ 自适应静默失效。
+        // ⚠ 上面那条「三档给出三个不同门槛」的闸传的是**预设表**里的值,不是生效配置 ⇒ 它当时照样绿。
+        //   这两条盯的是**生效值**,补的正是那个盲区。
+        let liveStart = VoiceLoop.shared.startRMS, liveCeil = VoiceLoop.shared.gateCeiling
+        check(VoiceLoop.adaptiveAlive(startRMS: liveStart, ceiling: liveCeil),
+              "生效配置 startRMS \(liveStart) < 门槛上限 \(liveCeil)（反过来 = 自适应静默失效，"
+              + "咖啡馆和安静房间同一个门槛）")
+        check(!VoiceLoop.adaptiveAlive(startRMS: 0.10, ceiling: 0.09),
+              "负向对照：07-29 那组值(0.10/0.09)必须被判死 —— 判不死这条闸就是装饰")
+        // 生效配置下门槛必须真的随环境动。恒定 = 自适应没在工作(而它不会报错,只会安静地不动)
+        let gQuiet = VoiceLoop.gateFrom(floor: 0.0002, startRMS: liveStart,
+                                        mult: VoiceLoop.shared.gateMult, ceiling: liveCeil)
+        let gCafe  = VoiceLoop.gateFrom(floor: 0.0300, startRMS: liveStart,
+                                        mult: VoiceLoop.shared.gateMult, ceiling: liveCeil)
+        check(gCafe > gQuiet,
+              "生效配置下咖啡馆门槛 \(gCafe) 高于安静房间 \(gQuiet)（相等 = 自适应是死的）")
+    }
+
+    // ⛔⛔ 2026-07-30 作者 第四次报「我说着说着，它自己就不收我的音、把我的话发出去了」。
+    // 查实:`maxTurn`(30s)到点硬切,与电平/门槛/滞回无关 —— 我前三轮全修在静音判定那条腿上。
+    // 证据是日志的形状:常开麦 37 段里 25–30s 区间**一段都没有**,两段停在 30.2s;
+    // 按住说话那条路不看 maxTurn,同期最长 88.3s。⇒ 这一组盯「四种收尾各走各的动作」。
+    do {
+        typealias TE = VoiceLoop.TurnEnd
+        func d(_ since: TimeInterval, _ dur: TimeInterval) -> TE {
+            VoiceLoop.turnEndDecision(sinceVoice: since, dur: dur,
+                                      silenceEnd: 1.4, minTurn: 0.5, maxTurn: 30)
+        }
+        check(d(0.2, 5) == .keepGoing,  "还在说、也没超长 → 继续录")
+        check(d(2.0, 5) == .send,       "静音够久且够长 → 这句说完了，发")
+        check(d(2.0, 0.3) == .discard,  "静音够久但太短 → 咳嗽/杂音，丢掉别发")
+        check(d(0.2, 31) == .roll,
+              "⭐ 超过上限但**你还在说** → 滚动切段，不是 .send（.send 会落图标+响提示音 = 谎报「不听你了」）")
+        // 负向对照:旧写法 `(静音&&够长) || dur>maxTurn` 对这一格给的是 .send。
+        // 若哪天有人把 .roll 改回 .send,上面那条会红 —— 这一条钉住"两者确实不是同一个动作"。
+        check(d(0.2, 31) != d(2.0, 5),
+              "负向对照：超长与说完必须给出**不同**动作（相等 = 又退回旧写法那一行）")
+        check(d(0.2, 29.9) == .keepGoing, "上限之内不切（边界:29.9s）")
     }
 
     // ⛔⛔ 2026-07-28 咖啡馆实证:三档灵敏度**一动没动过门槛**(日志里 13 次有 8 次门槛恰好 0.0200
@@ -3930,8 +4011,9 @@ if CommandLine.arguments.contains("--selftest-voice") {
           "门槛倍数 \(VoiceLoop.shared.gateMult)×底噪（越大越不容易被环境音触发）")
 
     let cfgKeys = ["voice_start_rms", "voice_silence_ms", "voice_min_turn_s", "voice_max_turn_s",
-                   "voice_gate_mult", "voice_onset_ms", "voice_send_after_ms"]
-    check(cfgKeys.count == 7, "VAD 门槛均可由 config.json 覆盖（\(cfgKeys.joined(separator: " / "))）")
+                   "voice_gate_mult", "voice_onset_ms", "voice_send_after_ms",
+                   "voice_gate_ceiling", "voice_hold_ratio"]   // 后两个此前没列,而它们同样能改行为
+    check(cfgKeys.count == 9, "VAD 门槛均可由 config.json 覆盖（\(cfgKeys.joined(separator: " / "))）")
     // ⛔ 发送窗口必须**明显长于**分段窗口 —— 两者相等就等于没拆开这两个边界,病会原样回来。
     check(Composer.windowSec > 1.4 || ProcessInfo.processInfo.environment["TINGZHE_SEND_AFTER_MS"] != nil,
           "发送窗口 \(Composer.windowSec)s > 分段窗口 1.4s（相等 = 又变回按停顿切消息）")
