@@ -158,8 +158,15 @@ let projectDir: URL = resolveProjectDir(
 /// 初始化的,不是惰性的。我第一版把它写在第 30 行(两个依赖都在它后面),编译器一声不吭,
 /// 运行时 `--apply` 直接 **SIGSEGV(139)**。⚠ 而我第一次验它时把管道里 `tail` 的退出码
 /// 当成了程序的退出码,于是看到 rc=0 —— **和这个 repo 记了三次的 pipefail 坑是同一个动作**。
-let kHUD = ProcessInfo.processInfo.environment["TINGZHE_SELFTEST_HUD"] == "1"
-    || (!isOneShot && loadHUDEnabled())
+/// 浮层到底开不开。⛔ 抠成纯函数的理由:原来这个三项表达式**唯一的断言是恒真的**
+/// (`loadHUDEnabled() == true || loadHUDEnabled() == false` —— Bool 永远满足,
+/// 那条 check 从写下起不可能红过一次),而注释却自称守着「hud:false 必须真的关得掉」。
+/// 2026-07-30 dev-governance §8 律二扩条二立案后回头审自家闸时查出。
+func hudOn(selftestEnv: Bool, isOneShot: Bool, cfgEnabled: Bool) -> Bool {
+    selftestEnv || (!isOneShot && cfgEnabled)
+}
+let kHUD = hudOn(selftestEnv: ProcessInfo.processInfo.environment["TINGZHE_SELFTEST_HUD"] == "1",
+                 isOneShot: isOneShot, cfgEnabled: loadHUDEnabled())
 let kHUDSeconds = loadHUDSeconds()
 let kHUDPosition = loadHUDPosition()
 
@@ -4310,7 +4317,22 @@ if CommandLine.arguments.contains("--selftest-hud") {
     check(p1 > p0, "否决落进了 pending-review.jsonl（候选,不是决定）")
 
     // hud:false 必须真的关得掉 —— 这是我给「我推荐甲而 作者 拍丙」留的退路,退路坏了等于没有
-    check(loadHUDEnabled() == true || loadHUDEnabled() == false, "config 的 hud 字段可读")
+    // ⛔ 原来这里是 `loadHUDEnabled() == true || loadHUDEnabled() == false` —— **恒真**,
+    //   Bool 永远满足其中一支,这条 check 从写下起不可能红过一次;而它上面那行注释
+    //   自称守着「hud:false 必须真的关得掉」。**注释在守,断言在放。**
+    //   2026-07-30(dev-governance §8 律二扩条二立案后回头审自家闸)换成四格真值表。
+    check(hudOn(selftestEnv: false, isOneShot: false, cfgEnabled: true),
+          "常驻 + config 开着 → 浮层显示")
+    check(!hudOn(selftestEnv: false, isOneShot: false, cfgEnabled: false),
+          "⭐ 常驻 + `hud:false` → 真的关得掉（这是 作者 的退路,退路坏了等于没有）")
+    check(!hudOn(selftestEnv: false, isOneShot: true, cfgEnabled: true),
+          "一次性命令(--fix/--apply)不弹浮层,哪怕 config 开着")
+    check(hudOn(selftestEnv: true, isOneShot: true, cfgEnabled: false),
+          "自检 env 能强开(否则第 11 项自己就跑不起来)")
+    check(loadHUDEnabled() == ((try? JSONSerialization.jsonObject(
+            with: Data(contentsOf: projectDir.appendingPathComponent("config.json"))))
+            .flatMap { ($0 as? [String: Any])?["hud"] as? Bool } ?? true),
+          "读的是**生效配置**里的 hud,不是代码里的默认值（§8 律二扩条二:判据至少一腿读生效态）")
 
     // ⛔ 2026-07-28 作者 改判「位置太偏 + 时间太短」后新增。
     // 这两个数以前是写死的常量,没有任何东西验过它们 —— 而 作者 用起来不方便的正是它们。
