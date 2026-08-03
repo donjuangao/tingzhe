@@ -1848,6 +1848,8 @@ final class Controller {
         }
         seqLock.unlock()
         for (raw, fixed, dn, cn) in ready {
+            // 空正文 = 上游失败时还回来的号:它的作用只是**让队列往前走**,不该被投递。
+            if fixed.isEmpty { continue }
             DispatchQueue.main.async {
                 // ⛔ 语音模式下不许一段一发 —— 那正是咖啡馆里把一句话切成三条的那一刀。
                 // 攒进 Composer,等你真的停下来再拼成一条(见 Composer 头注)。
@@ -1884,6 +1886,15 @@ final class Controller {
 
     func transcribeTurn(_ url: URL) {
         seqLock.lock(); let mySeq = turnSeq; turnSeq += 1; seqLock.unlock()
+        // ⛔⛔ 2026-08-03 作者 报「收音看得见,转写不出来」查出的病根:
+        //   领了号却在失败路径上**不还号** ⇒ 顺序队列永远等着那个号,
+        //   后面每一段转写成功的都只堆进 pending,**一个也发不出去**。
+        //   实证:04:08/04:09 三次网络失败领走了号,此后 04:14 两段转写成功(5 字/174 字,
+        //   已落 transcripts.jsonl)却一个字没出来;日志里最后一次「一句一条 → 发出」停在 07-29。
+        // ⚠ 同一个函数里 `Composer.leave()` 用 defer 守住了**所有**返回路径,注释还逐字写着
+        //   「漏一条就永远归不了零 → 话再也发不出去」—— **想清楚了,却只应用到那一个变量上。**
+        //   序号是同一种东西:**凡是在入口领、必须在所有出口还。**
+        var delivered = false
         let t0 = Date()
         // ⛔ 必须在**派出去之前**记账:转写还在路上时 Composer 不许发,
         //   否则慢的那段回来时前半句已经发出去了 —— 又变成半句一条。
@@ -1892,7 +1903,12 @@ final class Controller {
             guard let self = self else { return }
             // ⚠ leave() 必须在**所有**返回路径上都跑到(含转写为空、转写失败),
             //   漏一条 inFlight 就永远归不了零 → 计时器永远不响 → 话再也发不出去。
-            defer { try? FileManager.default.removeItem(at: url); Composer.leave() }
+            defer {
+                try? FileManager.default.removeItem(at: url)
+                Composer.leave()
+                // 没交付过 ⇒ 还号。空正文只推进队列、不投递(见 deliverInOrder 里的跳过)。
+                if !delivered { self.deliverInOrder(mySeq, "", "", 0, 0) }
+            }
             guard let raw = transcribe(url, key: self.key), !raw.isEmpty else { return }
             let (fixed, dn, cn) = correct(raw, self.rules, self.canon, self.protected)
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
@@ -1911,6 +1927,7 @@ final class Controller {
             //   ⚠ 历史那 159 条的真实时长**不可回溯**(音频转写完即删)。
             appendJSONL(dur: durLog, ms: ms, raw: raw, fixed: fixed, fixes: dn + cn,
                         dictHash: self.rulesHash, fixDict: dn, fixCanon: cn)
+            delivered = true
             self.deliverInOrder(mySeq, raw, fixed, dn, cn)
         }
     }
@@ -3851,6 +3868,32 @@ if CommandLine.arguments.contains("--selftest-voice") {
         deliverProbe = nil
         check(got == ["甲", "乙", "丙"],
               "乱序完成也按原顺序投递（实得 \(got.joined(separator: "→")))")
+    }
+
+    // ⛔⛔ 2026-08-03 作者 报「收音看得见,转写不出来」的病根判据:
+    //   转写**失败**的那一段领了号却不还 ⇒ 队列永远等它 ⇒ 后面全部堵死。
+    //   实证:04:08/04:09 三次网络失败之后,04:14 两段转写成功(5 字/174 字,已落 JSONL)
+    //   却一个字没出来;日志里最后一次「一句一条 → 发出」停在 07-29。
+    //   ⚠ 这条之所以能活到今天:**没有任何断言问过「上游失败之后,后面的还走不走」**。
+    //   见红方式:把 transcribeTurn 的 defer 里那句还号删掉,这条立刻红。
+    do {
+        let c = Controller.shared
+        var got: [String] = []
+        deliverProbe = { got.append($0) }
+        c.resetSeqForSelftest()
+        // ⛔ 必须驱动**生产的** transcribeTurn 失败出口 —— 第一版我直接调
+        //   probeDeliverInOrder(0, "") ,那等于**替它把号还了**,于是把 defer 里那句删掉
+        //   断言照样绿。**判据测的不是它声称测的东西**(今天第三次同型)。
+        //   喂一个不存在的音频路径 ⇒ transcribe() 在读文件那步就返回 nil ⇒ 走真失败出口,不用网络。
+        c.transcribeTurn(URL(fileURLWithPath: "/nonexistent/v1-forced-failure.m4a"))   // 领走 seq 0
+        c.probeDeliverInOrder(1, "后面这句必须还能出来")
+        let dl = Date().addingTimeInterval(4.0)
+        while Date() < dl && got.isEmpty {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        deliverProbe = nil
+        check(got == ["后面这句必须还能出来"],
+              "上游失败不堵死队列：空号只推进不投递，后面那句照常发出（实得 \(got)）")
     }
 
     // ⛔⛔ 2026-07-28 咖啡馆回归 —— 这一条守的就是那次事故本身。
