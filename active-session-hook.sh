@@ -42,4 +42,36 @@ if [ -f "$STATE/voice-on" ]; then
   pgrep -f "speak-watch.py" >/dev/null 2>&1 || \
     ( "${TINGZHE_DIR:-$HOME/Downloads/tingzhe}/speak-watch.py" >/dev/null 2>&1 & )
 fi
+
+# ⭐ 语音快车道(作者 2026-07-30 拍 D1乙 · 面板 1613d176)
+# 实测:作者 说完话到听见回话**中位 269s**,其中 **87% 是工具链**(n=178 真实轮次);
+# 而 0 工具的轮次只要 25.6s —— 把重活挪走 = 269s → 约 25s。
+#
+# ⛔ 判据**两条都要命中**,这是 作者 备注亲问的作用域:
+#   ①语音模式开着(voice-on 存在) ②partner 就是**本条** session(voice-partner == session_id)
+#   ⇒ 治理线/MICA 线哪怕麦克风开着也**零影响** —— 它们的 session_id 不等于 partner。
+#
+# 为什么扩这只而不是新装一只:它已经拿到 session_id、已经在读 voice-on、
+# 触发时机也正是"接下来会有输出"那一刻。再装一只 = 同一件事两处实现(律三)。
+if [ -f "$STATE/voice-on" ] && [ -f "$STATE/voice-partner" ]; then
+  SID=$(printf '%s' "$IN" | python3 -c \
+        'import json,sys;print(json.load(sys.stdin).get("session_id") or "")' 2>/dev/null || true)
+  PARTNER=$(tr -d '[:space:]' < "$STATE/voice-partner" 2>/dev/null || true)
+  if [ -n "$SID" ] && [ "$SID" = "$PARTNER" ]; then
+    cat <<'FASTLANE'
+⚡ 语音快车道已生效（作者 拍 D1乙 · 只对本条 session,别的线不受影响）
+
+作者 此刻在用**语音**跟你说话 —— 他多等的每一秒都是干等着听。
+实测中位 269s,其中 87% 花在工具链上;而不开工具的轮次只要 25.6s。
+
+⇒ **先把话说回去,重活派后台**:
+· 只读调查 / 大输出 / 能并行的活 → `Agent(run_in_background: true)` 派出去,别在主线里串着跑
+· 主线只留:回他的话 + 必须你亲自判断的那一两步
+· **派完立刻先答一句**,不要等工兵回来才开口
+
+⛔ 边界不变:改代码 / 改配置 / 碰 prod 仍然你自己来(今天那个 30s 的 bug 正是你盯日志看出来的形状,
+派出去多半只会回来一句"未发现异常");派工模型永不 Fable。
+FASTLANE
+  fi
+fi
 exit 0
