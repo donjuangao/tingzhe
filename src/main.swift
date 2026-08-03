@@ -1132,12 +1132,26 @@ final class VoiceLoop {
         let level = rms(buf)
         if dbgFrames, VoiceLoop.now().timeIntervalSince(dbgLast) > 0.1 {
             dbgLast = VoiceLoop.now()
-            // 每 100ms 一行:电平 · 起录门槛 · 续录门槛 · 此刻算不算人声 · 在不在一句话里
-            log(String(format: "帧 %.4f | 起 %.4f 续 %.4f | %@ | %@",
-                       level, threshold, holdThreshold,
-                       VoiceLoop.isVoiceFrame(level: level, start: threshold,
-                                              hold: holdThreshold, speaking: speaking) ? "人声" : "静",
-                       speaking ? "录音中" : "待机"))
+            // ⛔ 单独落 frames.jsonl,**不写 app.log**(2026-08-03 作者 拍「开一天」时补):
+            //   ①每 100ms 一行,开一天会把 app.log 撑爆 ②而闸正是靠 app.log **尾部**判权限状态
+            //   —— 同一天上午刚为「闸污染它自己要读的日志」修过启动冒烟,这是同一个病的第二处。
+            // ⛔ 用 JSONL 不用人话:它的用途是**算逐帧分布重定阈值**(卷 V4),要机器读,不是给人看。
+            // ⛔ 只记电平与门槛,**不记任何语音内容** —— 与 transcripts 那条禁区同规。
+            let voiced = VoiceLoop.isVoiceFrame(level: level, start: threshold,
+                                                hold: holdThreshold, speaking: speaking)
+            let dir = ProcessInfo.processInfo.environment["TINGZHE_LOG_DIR"]
+                ?? NSString(string: "~/Library/Logs/tingzhe").expandingTildeInPath
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            let line = String(format:
+                "{\"t\":%.3f,\"rms\":%.5f,\"start\":%.5f,\"hold\":%.5f,\"floor\":%.5f,\"voiced\":%@,\"speaking\":%@}\n",
+                VoiceLoop.now().timeIntervalSince1970, level, threshold, holdThreshold, floorRMS,
+                voiced ? "true" : "false", speaking ? "true" : "false")
+            let f = URL(fileURLWithPath: dir).appendingPathComponent("frames.jsonl")
+            if let h = try? FileHandle(forWritingTo: f) {
+                h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close()
+            } else {
+                try? line.write(to: f, atomically: true, encoding: .utf8)
+            }
         }
         // ⚠ 顺序不能反:先用**更新前**的门槛判这一帧是不是人声,再拿这个判定去更新底噪。
         //   反过来 = 这一帧参与抬高它自己要跨过的坎(原来的写法就是这样)。
