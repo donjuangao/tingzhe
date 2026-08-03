@@ -975,6 +975,19 @@ final class VoiceLoop {
         return dur > maxTurn ? .roll : .keepGoing
     }
 
+    /// ⏱ 可注入时钟。默认就是真时钟 ⇒ **生产行为一个字节都不变**。
+    /// 存在的唯一理由:让分段判定能**离线、确定性地**被驱动(验收卷 P1)。
+    /// ⛔ 为什么不另写一份判定逻辑来测:本项目为此栽过 ——
+    /// `--selftest-record` 曾自己复制了一份录音代码,于是「踩过的坑只要重新犯在生产那一处,
+    /// 该项照旧绿」。**测的必须是生产那一份,不是它的副本。**
+    static var now: () -> Date = { Date() }
+
+    /// 📋 分段观察者。默认 nil ⇒ 生产零开销零行为变化。
+    /// 设上之后:每段收尾时回调 (起, 止, 处置),且 `endTurn` **不再去真转写**
+    /// —— 离线跑要的是边界与处置,不是把 8 条基线又发一遍云端。
+    /// 处置取值与 `TurnEnd` 一一对应:`send` / `discard` / `roll`。
+    static var onSegment: ((TimeInterval, TimeInterval, String) -> Void)? = nil
+
     var threshold: Float {
         VoiceLoop.gateFrom(floor: floorRMS, startRMS: startRMS, mult: gateMult, ceiling: gateCeiling)
     }
@@ -1104,8 +1117,8 @@ final class VoiceLoop {
 
     private func consume(_ buf: AVAudioPCMBuffer, _ fmt: AVAudioFormat) {
         let level = rms(buf)
-        if dbgFrames, Date().timeIntervalSince(dbgLast) > 0.1 {
-            dbgLast = Date()
+        if dbgFrames, VoiceLoop.now().timeIntervalSince(dbgLast) > 0.1 {
+            dbgLast = VoiceLoop.now()
             // 每 100ms 一行:电平 · 起录门槛 · 续录门槛 · 此刻算不算人声 · 在不在一句话里
             log(String(format: "帧 %.4f | 起 %.4f 续 %.4f | %@ | %@",
                        level, threshold, holdThreshold,
@@ -1128,7 +1141,7 @@ final class VoiceLoop {
                 // ⛔ 打断:你一开口,我立刻闭嘴。**这条要在"是不是一句话"之前判**,
                 // 否则得等一整句说完才停,那就不叫打断了。
                 if Speaker.isPlaying { Speaker.shutUp() }
-                lastVoiceAt = Date()
+                lastVoiceAt = VoiceLoop.now()
                 if !speaking { beginTurn(fmt); VoiceBadge.shared.setCapturing(true) }
             }
         } else {
@@ -1138,7 +1151,7 @@ final class VoiceLoop {
             turnPeak = max(turnPeak, level)
             try? file?.write(from: buf)
             switch VoiceLoop.turnEndDecision(
-                    sinceVoice: Date().timeIntervalSince(lastVoiceAt), dur: turnDuration(),
+                    sinceVoice: VoiceLoop.now().timeIntervalSince(lastVoiceAt), dur: turnDuration(),
                     silenceEnd: silenceEnd, minTurn: minTurn, maxTurn: maxTurn) {
             case .send:      endTurn()
             case .discard:   cancelTurn()          // 太短 = 咳嗽/杂音,丢掉别发
@@ -1151,7 +1164,7 @@ final class VoiceLoop {
     }
 
     private var turnStart = Date()
-    private func turnDuration() -> TimeInterval { Date().timeIntervalSince(turnStart) }
+    private func turnDuration() -> TimeInterval { VoiceLoop.now().timeIntervalSince(turnStart) }
 
     /// ⛔ 2026-07-28 作者 抓:「光标必须点在输入框里，否则话就丢了」。
     /// 根因:`deliver` 往**当前焦点**粘,而你说话时焦点常常不在那儿(比如刚点过别处)。
@@ -1178,7 +1191,7 @@ final class VoiceLoop {
         let u = FileManager.default.temporaryDirectory
             .appendingPathComponent("moss-turn-\(UUID().uuidString).caf")
         guard let f = try? AVAudioFile(forWriting: u, settings: fmt.settings) else { return }
-        file = f; fileURL = u; speaking = true; turnStart = Date()
+        file = f; fileURL = u; speaking = true; turnStart = VoiceLoop.now()
         if !rollingOver { beep("Tink") }
     }
 
@@ -1186,11 +1199,13 @@ final class VoiceLoop {
         if let u = fileURL { try? FileManager.default.removeItem(at: u) }
         // ⚠ 先落 speaking=false 再刷徽章 —— 徽章要读 isCapturing 才能决定画哪个态,
         //   原来的顺序让它读到"还在收",于是画不出「等你说完」那一档。
+        let t0 = turnStart, t1 = VoiceLoop.now()
         file = nil; fileURL = nil; speaking = false
         VoiceBadge.shared.setCapturing(false)
         // ⛔ 这一段被丢了(太短=咳嗽/杂音),但 beginTurn 已经撤过计时器 ——
         //   不在这儿重新上弦,前面攒着的话就**永远发不出去**了。
         Composer.arm()
+        VoiceLoop.onSegment?(t0.timeIntervalSince1970, t1.timeIntervalSince1970, "discard")
     }
 
     /// - Parameter rollingOver: `maxTurn` 到点但你**还在说** —— 这一段照样落盘去转写
@@ -1207,7 +1222,90 @@ final class VoiceLoop {
                    turnPeak, threshold, floorRMS, turnPeak / max(threshold, 0.0001)))
         turnPeak = 0
         if !rollingOver { beep("Pop") }
+        // 离线分段观察者在岗时:交出边界与处置,**不去真转写**
+        // (要的是「切在哪、为什么切」,不是把基线语料又发一遍云端)。
+        if let obs = VoiceLoop.onSegment {
+            obs(turnStart.timeIntervalSince1970, VoiceLoop.now().timeIntervalSince1970,
+                rollingOver ? "roll" : "send")
+            try? FileManager.default.removeItem(at: u)
+            return
+        }
         Controller.shared.transcribeTurn(u)
+    }
+
+    /// P1(验收卷 §0.1)· 离线驱动分段判定:喂一个音频文件 → 吐出边界表。
+    ///
+    /// ⛔ **它喂的是生产的 `consume`,不是它的副本。** 本项目为「副本」栽过:
+    /// `--selftest-record` 曾自己复制一份录音代码,于是同样的错只要重新犯在生产那一处,
+    /// 那一项照旧打绿。⇒ 这里只做三件事:①造 buffer ②推虚拟时钟 ③收边界,
+    /// **判定一行都不重写**。
+    ///
+    /// ⚠ 帧长与采样率必须跟实时那条路一致(2048 帧 @ 麦克风原生 48k):
+    /// `frameMs = frameLength / sampleRate`,喂 16k 的话同样 2048 帧就从 42.7ms 变成 128ms,
+    /// 起录连续帧数(`onsetMs`)与平滑窗口全跟着变 —— 那测的就不是同一个东西了(卷 V4 标定同粒度)。
+    /// - Parameter gain: 喂进去之前给样本乘的倍数。**默认 1.0 = 原样**。
+    ///   ⚠ 它存在的理由是一条实测事实,不是方便:实时那条路开着 `setVoiceProcessingEnabled(true)`
+    ///   (含 AGC),日志里真人说话的段峰值 RMS 是 **0.1506–0.24**;而 `record baseline/` 是
+    ///   **不经这条路**录的,同一算法测出来最大只有 **0.0836** —— 两者差约 1.8 倍,**不同分布**。
+    ///   ⛔ 用 ≠1.0 的增益跑出来的结论,必须同时报出增益值并标「**标定债**」(卷 V4):
+    ///   这个倍数是拿"live 段峰值下界 ÷ 语料段峰值上界"凑出来的,**是猜,不是标定** ——
+    ///   真要的是同一条路录的语料。
+    func driveOffline(url: URL, tailSilenceSec: Double = 3.0, gain: Float = 1.0,
+                      emit: @escaping (TimeInterval, TimeInterval, String) -> Void) throws {
+        let src = try AVAudioFile(forReading: url)
+        guard let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000,
+                                      channels: 1, interleaved: false),
+              let conv = AVAudioConverter(from: src.processingFormat, to: fmt) else {
+            throw NSError(domain: "segment", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "建不出 48k 单声道转换器"])
+        }
+        let chunk: AVAudioFrameCount = 2048            // 与 installTap(bufferSize:) 同值
+        // 虚拟时钟:从一个固定原点起步,每喂一块推进 chunk/48000 秒。
+        // ⇒ 结果**确定性可复现**,且不受这台机器跑得多快影响。
+        var virtual = Date(timeIntervalSince1970: 1_700_000_000)
+        let epoch = virtual
+        VoiceLoop.now = { virtual }
+        VoiceLoop.onSegment = { a, b, kind in
+            emit(a - epoch.timeIntervalSince1970, b - epoch.timeIntervalSince1970, kind)
+        }
+        defer { VoiceLoop.now = { Date() }; VoiceLoop.onSegment = nil }
+
+        var eof = false
+        func feed(_ buf: AVAudioPCMBuffer) {
+            consume(buf, fmt)
+            virtual = virtual.addingTimeInterval(Double(buf.frameLength) / fmt.sampleRate)
+        }
+        while !eof {
+            guard let out = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunk) else { break }
+            var err: NSError?
+            let status = conv.convert(to: out, error: &err) { _, st in
+                guard let inBuf = AVAudioPCMBuffer(pcmFormat: src.processingFormat,
+                                                   frameCapacity: chunk) else {
+                    st.pointee = .endOfStream; return nil
+                }
+                do { try src.read(into: inBuf) } catch { st.pointee = .endOfStream; return nil }
+                if inBuf.frameLength == 0 { st.pointee = .endOfStream; return nil }
+                st.pointee = .haveData
+                return inBuf
+            }
+            if let err = err { throw err }
+            if out.frameLength > 0 {
+                if gain != 1.0, let ch = out.floatChannelData {
+                    for k in 0..<Int(out.frameLength) { ch[0][k] *= gain }
+                }
+                feed(out)
+            }
+            if status == .endOfStream || out.frameLength == 0 { eof = true }
+        }
+        // 尾部补数字静音,让最后一段**按真实的静音逻辑自然收尾** ——
+        // 比强行 endTurn 忠实:强行收尾会把"它到底会不会自己收"这个问题跳过去。
+        let tail = Int(tailSilenceSec * fmt.sampleRate / Double(chunk))
+        for _ in 0..<max(tail, 0) {
+            guard let z = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunk) else { break }
+            z.frameLength = chunk
+            memset(z.floatChannelData![0], 0, Int(chunk) * MemoryLayout<Float>.size)
+            feed(z)
+        }
     }
 }
 
@@ -3409,6 +3507,35 @@ if CommandLine.arguments.contains("--selftest-mainpath") {
 // 闸当场判红 —— 而产品是对的。**同一份清单存两处,第二处一定会落后。**
 if CommandLine.arguments.contains("--list-ptt-keys") {
     for c in pttChoices { print(c.raw) }
+    exit(0)
+}
+
+// P1(验收卷 §0.1)· 离线跑分段判定:`--selftest-segment <音频…>`
+// 输出每段:起(s) 止(s) 时长(s) 处置。处置 ∈ send / discard / roll,与 TurnEnd 一一对应。
+if let i = CommandLine.arguments.firstIndex(of: "--selftest-segment") {
+    var g: Float = 1.0
+    if let gi = CommandLine.arguments.firstIndex(of: "--gain"),
+       gi + 1 < CommandLine.arguments.count, let v = Float(CommandLine.arguments[gi + 1]) { g = v }
+    let files = Array(CommandLine.arguments.dropFirst(i + 1))
+        .filter { !$0.hasPrefix("--") && Float($0) == nil }
+    guard !files.isEmpty else {
+        FileHandle.standardError.write(Data("用法: --selftest-segment <音频文件…>\n".utf8)); exit(2)
+    }
+    for f in files {
+        let u = URL(fileURLWithPath: f)
+        print("── \(u.lastPathComponent) ──" + (g != 1.0 ? "  [增益 ×\(g) · 标定债]" : ""))
+        var n = 0
+        do {
+            try VoiceLoop.shared.driveOffline(url: u, gain: g) { a, b, kind in
+                n += 1
+                print(String(format: "  段%-2d  %6.2fs → %6.2fs  时长 %5.2fs  %@",
+                             n, a, b, b - a, kind))
+            }
+            if n == 0 { print("  (零段 —— 整条都没过起录门槛)") }
+        } catch {
+            print("  ✗ 读不了: \(error.localizedDescription)")
+        }
+    }
     exit(0)
 }
 
