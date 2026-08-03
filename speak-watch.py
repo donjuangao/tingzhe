@@ -99,6 +99,24 @@ def engine():
     return None
 
 
+LOGDIR = os.environ.get("TINGZHE_LOG_DIR") or os.path.expanduser("~/Library/Logs/tingzhe")
+
+
+def timeline(event, **kw):
+    """验收卷 P2 · 时间线记录。⛔ 单独一个文件,**不写 app.log** ——
+    app.log 是常驻的操作日志,而闸的权限检测要读它的尾部;往里塞东西会把
+    「就绪/未授权限」挤出读取窗口(今天刚为同一个病修过 check.sh 的启动冒烟)。
+    ⛔ 也**不记正文** —— 只记时刻与长度。正文属于 transcripts 那条禁区。
+    """
+    try:
+        os.makedirs(LOGDIR, exist_ok=True)
+        with open(os.path.join(LOGDIR, "timeline.jsonl"), "a") as f:
+            f.write(json.dumps({"ts": time.time(), "event": event, **kw},
+                               ensure_ascii=False) + "\n")
+    except Exception:
+        pass          # 记不上不许影响主流程:它是观测,不是功能
+
+
 def speak_stream(text):
     """把一段话交给 Swift 那边流式念出来。
 
@@ -120,9 +138,11 @@ def speak_stream(text):
     if e is None:
         log("✗ 找不到 tingzhe 可执行文件 → 这段没念（跑一次 ./build.sh 或 ./build.sh --dev）")
         return False
+    timeline("speak_start", chars=len(text))     # ← P2:第一段回话音频开始播放的时刻
     try:
         r = subprocess.run([str(e), "--speak"], input=text, text=True,
                            capture_output=True, timeout=180)
+        timeline("speak_end", chars=len(text), rc=r.returncode)
         if r.returncode != 0:
             err = (r.stderr or "").strip()[:200]
             log(f"念失败/被打断 rc={r.returncode} {err}")
