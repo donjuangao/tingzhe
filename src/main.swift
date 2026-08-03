@@ -3510,6 +3510,23 @@ if CommandLine.arguments.contains("--list-ptt-keys") {
     exit(0)
 }
 
+// 验收卷 B2/B4 · 打印浮层判据的**生效态**与全矩阵,供外部做甲/乙差分。
+// 只读:不写任何文件,不弹任何窗口。
+if CommandLine.arguments.contains("--selftest-hudmatrix") {
+    print("生效配置读到的 hud = \(loadHUDEnabled())   (config 目录: \(kConfigDir))")
+    print("运行形态 × 字段值 → 浮层该不该出现")
+    for (形态, env, oneShot) in [("常驻", false, false), ("一次性命令", false, true),
+                                 ("自检(env 强开)", true, true)] {
+        var row = "  \(形态): "
+        for (名, v) in [("开", true), ("关", false)] {
+            row += "\(名)=\(hudOn(selftestEnv: env, isOneShot: oneShot, cfgEnabled: v) ? "出" : "不出")  "
+        }
+        print(row)
+    }
+    print("  «未设置» 走默认: loadHUDEnabled() 无 hud 键时返回 true → 与「开」同列")
+    exit(0)
+}
+
 // P1(验收卷 §0.1)· 离线跑分段判定:`--selftest-segment <音频…>`
 // 输出每段:起(s) 止(s) 时长(s) 处置。处置 ∈ send / discard / roll,与 TurnEnd 一一对应。
 if let i = CommandLine.arguments.firstIndex(of: "--selftest-segment") {
