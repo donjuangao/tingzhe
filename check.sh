@@ -285,9 +285,20 @@ elif pgrep -f "^$PWD/tingzhe.app/Contents/MacOS/tingzhe$" >/dev/null; then
     [ -n "$A" ] && [ "$A" = "$B" ] && break
   done
   LOCKOUT=""
+  # ⛔⛔ 2026-07-30(指纹仪 P4 逮到):这次冒烟**无参启动** ⇒ 引擎判它不是一次性命令
+  #   ⇒ 锁拒绝那行落进**生产** app.log。每跑一次闸追加 173 字节。
+  #   这不是洁癖:ENGINEERING-NOTES.md 逐字记着「每跑一次 check.sh 就往 app.log 追加数行,
+  #   把常驻实例的『就绪 / 未授辅助功能权限』挤出读取窗口 → **第 6 项的权限检测会被静默弄哑**」。
+  #   ⇒ **闸自己在污染它下一步要读的那个文件。**
+  #   当初修的是「一次性命令不写 app.log」那条腿(isOneShot),漏了「无参启动」这条 ——
+  #   同一件事两条腿,只修了有名字的那条。
+  # ⚠ 只能给**这一条命令**加前缀,不许 export:下面第 305 行的权限检测**必须**读生产 app.log,
+  #   export 了它就会去读沙箱,闸自己把自己弄瞎。
+  PRODLOG="${TINGZHE_LOG_DIR:-$HOME/Library/Logs/tingzhe}/app.log"
+  SMOKE_BEFORE=$( [ -f "$PRODLOG" ] && wc -c < "$PRODLOG" || echo 0 )
   for _ in 1 2 3; do
     # 后台起 + 2 秒后杀 —— 拿到锁也不会把闸挂住（macOS 无 timeout(1)，用这个既有模式）
-    LOCKOUT=$("$BIN" 2>&1 & P=$!; sleep 2; kill "$P" 2>/dev/null; wait "$P" 2>/dev/null) || true
+    LOCKOUT=$(TINGZHE_LOG_DIR="$SANDBOX/logs" "$BIN" 2>&1 & P=$!; sleep 2; kill "$P" 2>/dev/null; wait "$P" 2>/dev/null) || true
     grep -q "已有一个 tingzhe 在跑" <<<"$LOCKOUT" && break
     sleep 1
   done
@@ -296,6 +307,14 @@ elif pgrep -f "^$PWD/tingzhe.app/Contents/MacOS/tingzhe$" >/dev/null; then
   else
     fail "已有实例在跑，但第二个没被锁拒 —— 会双注册热键（按一次录两次）"
     printf "     第二个实例的输出: %s\n" "$(head -2 <<<"${LOCKOUT:-（空）}")"
+  fi
+  # ⛔ 判据:冒烟不许把一个字写进生产日志。见红方式 = 删掉上面那个 TINGZHE_LOG_DIR 前缀,这条立刻红。
+  SMOKE_AFTER=$( [ -f "$PRODLOG" ] && wc -c < "$PRODLOG" || echo 0 )
+  if [ "$SMOKE_BEFORE" = "$SMOKE_AFTER" ]; then
+    pass "启动冒烟没碰生产日志（$PRODLOG 字节数不变）"
+  else
+    fail "启动冒烟往**生产**日志追加了 $((SMOKE_AFTER - SMOKE_BEFORE)) 字节 —— 而第 6 项自己要读这个文件判权限"
+    printf "     追加的是: %s\n" "$(tail -c $((SMOKE_AFTER - SMOKE_BEFORE)) "$PRODLOG" | head -1)"
   fi
   # 读程序自己写的 app.log —— launchd 的 err.log 在 open -a 时期会空/滞后，
   # 用它判断权限状态会给出过期结论（2026-07-25 踩到：权限已好而闸仍 WARN）
