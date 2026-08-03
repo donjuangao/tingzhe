@@ -43,7 +43,8 @@ if [ -f "$STATE/voice-on" ]; then
     ( "${TINGZHE_DIR:-$HOME/Downloads/tingzhe}/speak-watch.py" >/dev/null 2>&1 & )
 fi
 
-# ⭐ 语音快车道(作者 2026-07-30 拍 D1乙 · 面板 1613d176)
+# ⭐ 语音快车道
+# (决策历史住 SST,不抄这里 —— 本文件只写工程事实,见 ENGINEERING-NOTES.md 首条)
 # 实测:作者 说完话到听见回话**中位 269s**,其中 **87% 是工具链**(n=178 真实轮次);
 # 而 0 工具的轮次只要 25.6s —— 把重活挪走 = 269s → 约 25s。
 #
@@ -59,7 +60,7 @@ if [ -f "$STATE/voice-on" ] && [ -f "$STATE/voice-partner" ]; then
   PARTNER=$(tr -d '[:space:]' < "$STATE/voice-partner" 2>/dev/null || true)
   if [ -n "$SID" ] && [ "$SID" = "$PARTNER" ]; then
     cat <<'FASTLANE'
-⚡ 语音快车道已生效（作者 拍 D1乙 · 只对本条 session,别的线不受影响）
+⚡ 语音快车道已生效（只对本条 session 生效,别的线不受影响）
 
 作者 此刻在用**语音**跟你说话 —— 他多等的每一秒都是干等着听。
 实测中位 269s,其中 87% 花在工具链上;而不开工具的轮次只要 25.6s。
