@@ -115,6 +115,13 @@ let kQuiet: Bool = ProcessInfo.processInfo.environment["TINGZHE_QUIET"] == "1"
 /// 上一版断言写的是 `check(kQuiet, "beep 是哑的")`,那只验了开关变量,
 /// **措辞超出了它实际检查的东西**:把 `if kQuiet { return }` 删掉,它照样绿。
 var beepsPlayed = 0
+/// ⛔ V1/BI-4(验收卷否决区):这两个是**痕迹**,不是守卫。
+/// 守卫(`kQuiet && TINGZHE_ALLOW_MIC != 1`)**防止**开真麦;计数器**发现它发生过** ——
+/// 两者不可互替。此前只有守卫:哪天有人把 `TINGZHE_ALLOW_MIC=1` 写进某个自检,
+/// 守卫自动让路,而**没有任何东西记下这件事**。
+/// 出卷官把这条列进 V1 时,指定的抓手就是「麦克风开启计数 + 输出动作计数」——查实两者都不存在,故补。
+var micOpens = 0
+var deliverCalls = 0
 func beep(_ name: String) {
     if kQuiet { return }
     beepsPlayed += 1
@@ -572,6 +579,11 @@ var deliverProbe: ((String) -> Void)?
 
 func deliver(_ text: String) {
     if let p = deliverProbe { p(text); return }
+    // ⛔ 痕迹记在探针短路**之后** —— 数的必须是「真往你窗口粘出去的那些」。
+    //   第一版我记在函数顶上,于是把被探针接走的 9 次也算了进去,而断言写的是
+    //   「没往焦点框投递过」——**措辞超出了它实际检查的东西**,跟本文件第 115 行注释
+    //   记的那条旧病一字不差。计数器放错一行,断言就开始说谎。
+    deliverCalls += 1
     // ⛔⛔ 2026-07-28 作者 抓:「凭什么要我先把光标点进对话框？我就是不想进去看字」。
     // 上一版我按"你开口那一刻的焦点"投递 —— 那还是要求你先把光标放对地方,方向错了。
     // ⭐ 正确的:**自动把目标 app 切到前台、粘、回车,再把焦点还给你原来那个 app**。
@@ -1050,6 +1062,7 @@ final class VoiceLoop {
             log("（自检态：不打开真麦克风。要验真设备请 TINGZHE_ALLOW_MIC=1）")
             return
         }
+        micOpens += 1                     // ← 痕迹:真的走到开麦这一步了
         let input = engine.inputNode
         // ⛔ 回声消除:没有它,常开麦必然把我自己的 TTS 录回来 → 死循环
         do { try input.setVoiceProcessingEnabled(true) }
@@ -4174,6 +4187,12 @@ if CommandLine.arguments.contains("--selftest-voice") {
     // 这三条盯的就是它们，因为每一条都是"跑闸的人听得见/看得见"的:
     check(beepsPlayed == 0,
           "整段自检**一声都没响过**（实测响了 \(beepsPlayed) 声；这一段本身会开关语音模式 6 次、静音 4 次）")
+    // ⛔ V1/BI-4:守卫会不会被绕开,靠**痕迹**发现,不靠守卫自己保证。
+    //   见红方式 = 给这一轮加 TINGZHE_ALLOW_MIC=1(那才是「一个开了真麦的自检」),这两条立刻红。
+    check(micOpens == 0,
+          "整段自检**没打开过真麦克风**（实测开了 \(micOpens) 次；开了 = 你说的话会被这轮自检录走）")
+    check(deliverCalls == 0,
+          "整段自检**没往焦点框投递过**（实测投了 \(deliverCalls) 次；投了 = 闸把字打进你正在用的窗口）")
     check(!VoiceLoop.shared.isRunning || ProcessInfo.processInfo.environment["TINGZHE_ALLOW_MIC"] == "1",
           "自检没有打开真麦克风（那条路能把转写结果 ⌘V 进你当时的窗口）")
 

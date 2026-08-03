@@ -879,6 +879,23 @@ else
   pass "shell 变量没有紧跟中文的（那会被 bash 当成变量名的一部分）"
 fi
 
+# ⛔ V1/BI-5(验收卷否决区)·「自检杀掉了一个不属于它的进程」
+# 查实:这个能力**已经删掉了** —— 运行时那两句 pkill afplay/say 早删(main.swift 注释逐字记着),
+# 仓里只剩 install-agent.sh 三处、打的是本项目自己的二进制路径,且那是显式安装动作不是自检。
+# ⇒ 坏仪器合成不出来(要造就得真杀一个进程)。**那就守住它别复活。**
+# ⚠ 第一版判据假阳性:它匹配到 check() **消息字符串里**的 "pkill" 三个字 ——
+#   注释/字符串当代码匹配,正是本项目三病四律里那条。故只认**真的调用形态**:
+#   Python 的 subprocess、Swift 的 Process/绝对路径、shell 里行首命令位。
+# 见红:往 speak-watch.py 加 `subprocess.run(["pkill", ...])`,这条立刻响。
+PK=$(grep -nE 'pkill' src/main.swift speak-watch.py review.py apply_review.py 2>/dev/null \
+     | grep -E 'subprocess|Process\(|/usr/bin/|/bin/sh' || true)
+if [ -z "$PK" ]; then
+  pass "运行时/自检路径没有 pkill 调用（杀别人进程的能力已删，且没被加回来）"
+else
+  fail "运行时/自检路径出现了 pkill 调用 —— 它会掐掉不属于本程序的进程"
+  printf '%s\n' "$PK" | head -3 | sed 's/^/     /'
+fi
+
 # ⛔⛔ 2026-07-28 作者:「两套语音在同时播放…我到底在我的机器里运行了几套」。
 # 病:speak-hook.sh(整段念)与 speak-watch.py(边写边念)靠瞬时 pgrep 互斥,
 #   而 watcher 会在每次开关语音模式时退出、下次 UserPromptSubmit 才回来 ——
